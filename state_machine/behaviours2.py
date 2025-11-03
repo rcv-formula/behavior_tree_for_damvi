@@ -32,9 +32,9 @@ def point_to_path_min_dist(px, py, path_msg:Path):
             dmin = d
     return dmin
 
-def is_in_front_180(rel_x, rel_y, ego_yaw):
+def is_in_front_180(rel_x, rel_y, ego_yaw, half_angle_deg:float=100.0)->bool:
     """
-    ego_yaw 방향 기준으로 장애물이 앞쪽 180도 안인지 확인.
+    ego_yaw 방향 기준으로 장애물이 앞쪽 200도 안인지 확인.
     앞쪽 반구 조건: cos(theta) >= 0  <=> 내 진행방향 단위벡터와 장애물 방향 단위벡터 내적 >= 0
     """
     dist = math.hypot(rel_x, rel_y)
@@ -45,7 +45,9 @@ def is_in_front_180(rel_x, rel_y, ego_yaw):
     ox = rel_x/dist
     oy = rel_y/dist
     dot = fx*ox + fy*oy
-    return dot >= 0.0
+    
+    cos_limit = math.cos(math.radians(half_angle_deg))
+    return dot >= cos_limit
 
 # 장애물 감지 자체는 state machine에서 하지 않을것으로 생각됩니다.
 # 장애물이 감지되었다는 결과를 토픽으로 받을 것으로 생각하고 있습니다.
@@ -154,13 +156,13 @@ class CheckObstacle(py_trees.behaviour.Behaviour):
             self.bb.dynamic_obstacle = False
             self.bb.dynamic_distance = 100.0
             self.dynamic_dist = 100.0
-            # return Status.FAILURE 실제로는 주석 지워라 아닌듯? 그냥 이대로하는게 맞는것 같은데. 왜냐면 dynamic이없는 상황이 무조건 있을테니. 없으면 일반 주행 해야하잖아.
+            # return Status.FAILURE 실제로는 주석 지워라
         if (self.static_timestamp == 0.0 or (now - self.static_timestamp) > self.fresh):
             self.node.get_logger().warn("/static_obstacle can't subscribable. CheckObstacle Failure.")
             self.bb.static_obstacle = False
             self.bb.static_distance = 100.0
             self.static_dist = 100.0
-            # return Status.FAILURE 위와 동일.
+            # return Status.FAILURE  실제로는 주석 지워라
         
         # 전방 180도, global path 인접 여부 확인해서 flag 결정
         dyn_flag = False
@@ -175,10 +177,19 @@ class CheckObstacle(py_trees.behaviour.Behaviour):
             dx = self.dynamic_x - self.ego_x
             dy = self.dynamic_y - self.ego_y
 
-            in_front = is_in_front_180(dx, dy, self.ego_yaw)          # ### ✅ 전방 180도
+            in_front = is_in_front_180(dx, dy, self.ego_yaw, half_angle_deg=100.0)          # ### ✅ 전방 200도
             close_enough = (self.dynamic_dist <= self.thresh_m)       # 거리 7m 이내
 
-            if in_front and close_enough:
+            # ### ✅ local_path 근처인지 확인 (1.0m 이내)
+            path_d = point_to_path_min_dist(self.dynamic_x, self.dynamic_y, self.local_path_msg)
+            if dyn_flag == False and (path_d is not None and path_d <= 1.0):
+                close_to_path = True
+            elif dyn_flag == True and (path_d is not None and path_d <= 1.2):
+                close_to_path = True
+            else:
+                close_to_path = False 
+
+            if in_front and close_enough and close_to_path:
                 dyn_flag = True
                 self.node.get_logger().info(
                     f"Dynamic VALID: dist={self.dynamic_dist:.2f}m, front180={in_front}"
@@ -190,23 +201,37 @@ class CheckObstacle(py_trees.behaviour.Behaviour):
                     self.node.get_logger().info(
                         f"Dynamic farther than {self.thresh_m}m."
                     )
+                elif not close_to_path:
+                    if path_d is None:
+                        self.node.get_logger().info(
+                            "Dynamic in front but local path not ready -> ignore static."
+                        )
+                    else:
+                        self.node.get_logger().info(
+                            f"Dynamic in front but not blocking path (dist to path={path_d:.2f}m >1.0m)"
+                        )
 
         # ------------------------
         # Static obstacle 판정
         # ------------------------
         if (self.static_x is not None and self.static_y is not None and
             self.ego_x    is not None and self.ego_y    is not None):
-
+            
             sx = self.static_x - self.ego_x
             sy = self.static_y - self.ego_y
 
-            in_front = is_in_front_180(sx, sy, self.ego_yaw)          # ### ✅ 전방 180도
+            in_front = is_in_front_180(sx, sy, self.ego_yaw, half_angle_deg=100.0)          # ### ✅ 전방 200도
             close_enough = (self.static_dist <= self.thresh_m)        # 거리 7m 이내
 
-            # ### ✅ local_path 근처인지 확인 (1.5m 이내)
+            # ### ✅ local_path 근처인지 확인 (0.5m 이내)
             path_d = point_to_path_min_dist(self.static_x, self.static_y, self.local_path_msg)
-            close_to_path = (path_d is not None and path_d <= 0.75)
-
+            if st_flag == False and (path_d is not None and path_d <= 0.5):
+                close_to_path = True
+            elif st_flag == True and (path_d is not None and path_d <= 0.6):
+                close_to_path = True
+            else:
+                close_to_path = False 
+	
             if in_front and close_enough and close_to_path:
                 st_flag = True
                 self.node.get_logger().info(
@@ -226,7 +251,7 @@ class CheckObstacle(py_trees.behaviour.Behaviour):
                         )
                     else:
                         self.node.get_logger().info(
-                            f"Static in front but not blocking path (dist to path={path_d:.2f}m >0.75m)"
+                            f"Static in front but not blocking path (dist to path={path_d:.2f}m >0.8m)"
                         )
 
         # Blackboard 갱신
@@ -252,26 +277,21 @@ class CheckObstacle(py_trees.behaviour.Behaviour):
         # else:
         #     self.bb.static_obstacle = False
         #     self.node.get_logger().info("No Static obj in "+str(self.thresh_m)+" meters.")
-#---------------------------------------------------------------------------------------------
+
+        # dynamic, static 중에 우선순위 정하기
+        # if self.bb.dynamic_obstacle==False and self.bb.static_obstacle:
+        #     self.prioritize_dynamic_flag = False
+        # else:   # 동적장애물이 유효사거리 내에 있다면 무조건 동적장애물을 우선으로 고려
+        #     self.prioritize_dynamic_flag = True
+        #     self.node.get_logger().info("Prioritize Dynamic Obstacle")
         # 이거를 일단 static 회피가 가능한지 보기 위해서 우선순위를 다 static이 있다면 static으로 우선순위를 주도록함
         if self.bb.dynamic_obstacle==False and self.bb.static_obstacle:
             self.prioritize_dynamic_flag = False
-        else:   
+        else:   # 동적장애물이 유효사거리 내에 있다면 무조건 동적장애물을 우선으로 고려
             self.prioritize_dynamic_flag = False
             # self.node.get_logger().info("Prioritize Dynamic Obstacle")
 
-        # "이 아래가 본대회용 판단기준!!!!!"
-        # if self.bb.static_obstacle:     # static이 존재하면 무조건 static 회피, 동적이 근처에 있으면 내가 조절.(ACC모드는 아니지만 ACC 수행.)
-        #     self.prioritize_dynamic_flag = False
-        #     self.node.get_logger().info("Prioritize Static Obstacle")
-        # elif self.bb.dynamic_obstacle:  # static이 존재하지 않고 dynamic이 있는 경우만 dynamic을 우선순위로 둠.
-        #     self.prioritize_dynamic_flag = True
-        #     self.node.get_logger().info("Prioritize Dynamic Obstacle")
-        # else:                           # 예외처리.
-        #     self.prioritize_dynamic_flag = False
-        #     self.node.get_logger().info("예외처리 : Prioritize Static Obstacle")
-#---------------------------------------------------------------------------------------------
-        # dynamic 유효, static 유효, obj_flag 메시지에 담아서 송신(40Hz)
+        # dynamic 유효, static 유효, obj_flag 메시지에 담아서 송신(10Hz)
         msg = PointStamped()
         msg.header.stamp = self.node.get_clock().now().to_msg()
         msg.point.x = float(self.bb.dynamic_obstacle)  # 파이썬은 float은 무조건 float64
@@ -359,7 +379,7 @@ class SelectPath(py_trees.behaviour.Behaviour):
                 self.pub_path.publish(self.local_path_msg)
                 self.node.get_logger().info("추월X, Emergency 인데 emergency_scaled_path가 아직 갱신이 안돼서 로컬 패스를 퍼블리쉬함!!")
                 return Status.SUCCESS
-        elif (self.bb.dynamic_distance <= 0.7 or self.bb.static_distance <= 1) and self.bb.overtake_flag == 2:	# Emergency!!! 추월모드에서는 동적장애물과의 거리가 0.7m로 줄어듦. (double thresholding)
+        elif (self.bb.dynamic_distance <= 0.5 or self.bb.static_distance <= 1) and self.bb.overtake_flag == 2:	# Emergency!!! 추월모드에서는 동적장애물과의 거리가 0.5로 줄어듦. (double thresholding)
             if self.emergency_scaled_path is not None:
                 self.pub_path.publish(self.emergency_scaled_path)
                 self.node.get_logger().info("Emergency!! velocity/10 path published! (추월O, Emergency)")
@@ -370,26 +390,14 @@ class SelectPath(py_trees.behaviour.Behaviour):
                 return Status.SUCCESS
 
         # Adaptive Cruise Control
-        elif (self.bb.dynamic_distance < 3.0) and self.bb.overtake_flag==4:    # ACC할때 static distance는 고려할 필요 없음. 비상상황인 경우는 이미 위에서 정의해둠.
+        elif (self.bb.dynamic_distance < 2.5) and self.bb.overtake_flag==4:    # ACC할때 static distance는 고려할 필요 없음. 비상상황인 경우는 이미 위에서 정의해둠.
             if self.acc_scaled_path is not None:
                 self.pub_path.publish(self.acc_scaled_path)
-                self.node.get_logger().info("ACC mode, distance < 3.0m")
+                self.node.get_logger().info("ACC mode, distance < 2.5m")
                 return Status.SUCCESS
             else:
                 self.pub_path.publish(self.local_path_msg)
-                self.node.get_logger().info("ACC mode, distance < 3.0m인데 acc_scaled_path가 아직 갱신이 안돼서 로컬 패스를 퍼블리쉬")
-                return Status.SUCCESS
-        # 얘는 static 회피 상황에서의 ACC 추가. (ACC 모드 아님!!)
-        # 얘의 문제가 static을 dynamic으로 잡는 경우엔 문제가됨. 근데 잠깐 보인다고 static으로 두진 않는대. unknown 상태가 된대.
-        # 이미 static으로 보인 애는 거의 계속 static으로 인식된다고 보면 될듯. => 그러면 현재는 문제 X
-        elif self.bb.overtake_flag==1 and self.bb.dynamic_obstacle and self.bb.dynamic_distance < 3.0:
-            if self.acc_scaled_path is not None:
-                self.pub_path.publish(self.acc_scaled_path)
-                self.node.get_logger().info("static 회피 모드에서의 ACC 수행중, distance < 3.0m")
-                return Status.SUCCESS
-            else:
-                self.pub_path.publish(self.local_path_msg)
-                self.node.get_logger().info("static 회피 모드에서의 ACC 수행중인데 acc_scaled_path가 아직 갱신이 안돼서 로컬 패스를 퍼블리쉬")
+                self.node.get_logger().info("ACC mode, distance < 2.5m인데 acc_scaled_path가 아직 갱신이 안돼서 로컬 패스를 퍼블리쉬")
                 return Status.SUCCESS
 
         # 이 아래는 결국에 로컬 패스 주행이라 합쳐도 되는데 모드 체크를 위해서 이렇게 두개로 나눠놨습니다.
