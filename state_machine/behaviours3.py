@@ -9,7 +9,12 @@ from geometry_msgs.msg import PoseStamped, PointStamped
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 from copy import deepcopy
 
-# behaviours2.py는 static 회피만을 위한 놈입니다. static 말고 다른 장애물은 없다고 가정합니다.
+# behaviours3.py는 behaviours2.py(static avoidance only)에서 동적장애물에 대한 ACC만을 추가한 경우입니다.
+# 코드가 옛날과 다른게 옛날엔 static만 있는 경우빼고는 dynamic 우선이었는데,
+# 이제는 static이 있다면 무조건 static 회피 우선임.
+# dynamic을 dynamic으로 인식했든 static으로 인식했든, static 회피 중에 장애물이 하나 더 뜨면 acc를 진행하면서 주행.
+# 그러다가 하나가 dynamic으로 변해도 그냥 ACC 하면서 회피 주행.
+# ACC는 두 장애물에 모두 실행.
 
 def yaw_from_quat(q):
     # quaternion -> yaw
@@ -78,7 +83,7 @@ class CheckObstacle(py_trees.behaviour.Behaviour):
         self.estop_thresh_m = 0.5   # 비상정지 인식 사거리 (50cm)
         self.fresh = 0.3            # 신호 지연 기준 시간 ------------------------------------> 지금은 3으로 일부러 늘려놨는데 0.5로 설정해!! 실제에서는!!
         self.prioritize_dynamic_flag = True   # True(1.0) dynamic, False(0)이 static을 우선으로 설정.
-        self.global_path_msg: Path | None =None
+        self.global_path_msg: Path | None=None
 
 
         # BB에 저장.
@@ -113,7 +118,7 @@ class CheckObstacle(py_trees.behaviour.Behaviour):
         return self.node.get_clock().now().nanoseconds/1e9
     
     def cb_path(self, msg:Path):
-        self.global_path_msg = msg
+        self.global_path_msg = msg   # 글로벌인데 그냥 귀찮으니 이름은 로컬로 할게
 
     # 내 위치 callback 함수
     def cb_ego_odom(self,msg:Odometry):
@@ -189,18 +194,52 @@ class CheckObstacle(py_trees.behaviour.Behaviour):
             in_front = is_in_front_180(dx, dy, self.ego_yaw, half_angle_deg=100.0)          # ### ✅ 전방 200도
             close_enough = (self.dynamic_dist <= self.thresh_m)       # 거리 7m 이내
 
-            if in_front and close_enough:
+            # ### ✅ local_path 근처인지 확인 (0.5m 이내)
+            path_d = point_to_path_min_dist(self.dynamic_x, self.dynamic_y, self.global_path_msg)
+            if dyn_flag == False and (path_d is not None and path_d <= 1.0):
+                close_to_path_dynamic = True
+            elif dyn_flag == True and (path_d is not None and path_d <= 2.0):
+                close_to_path_dynamic = True
+            else:
+                close_to_path_dynamic = False 
+	
+            if in_front and close_enough and close_to_path_dynamic:
                 dyn_flag = True
                 self.node.get_logger().info(
-                    f"Dynamic VALID: dist={self.dynamic_dist:.2f}m, front180={in_front}"
+                    f"Dynamic VALID: dist={self.dynamic_dist:.2f}m, path_d={path_d:.2f}m"
                 )
             else:
                 if not in_front:
-                    self.node.get_logger().info("Dynamic detected but NOT in front 180deg.")
+                    self.node.get_logger().info("Dynamic detected but NOT in front 200deg.")
                 elif not close_enough:
                     self.node.get_logger().info(
                         f"Dynamic farther than {self.thresh_m}m."
                     )
+                elif not close_to_path_dynamic:
+                    if path_d is None:
+                        self.node.get_logger().info(
+                            "Dynamic in front but local path not ready -> ignore static."
+                        )
+                    else:
+                        self.node.get_logger().info(
+                            f"Dynamic in front but not blocking path (dist to path={path_d:.2f}m >1m)"
+                        )
+
+
+
+
+            # if in_front and close_enough:
+            #     dyn_flag = True
+            #     self.node.get_logger().info(
+            #         f"Dynamic VALID: dist={self.dynamic_dist:.2f}m, front180={in_front}"
+            #     )
+            # else:
+            #     if not in_front:
+            #         self.node.get_logger().info("Dynamic detected but NOT in front 180deg.")
+            #     elif not close_enough:
+            #         self.node.get_logger().info(
+            #             f"Dynamic farther than {self.thresh_m}m."
+            #         )
 
         # ------------------------
         # Static obstacle 판정
@@ -217,32 +256,32 @@ class CheckObstacle(py_trees.behaviour.Behaviour):
             # ### ✅ local_path 근처인지 확인 (0.5m 이내)
             path_d = point_to_path_min_dist(self.static_x, self.static_y, self.global_path_msg)
             if st_flag == False and (path_d is not None and path_d <= 1.0):
-                close_to_path = True
+                close_to_path_static = True
             elif st_flag == True and (path_d is not None and path_d <= 2.0):
-                close_to_path = True
+                close_to_path_static = True
             else:
-                close_to_path = False 
+                close_to_path_static = False 
 	
-            if in_front and close_enough and close_to_path:
+            if in_front and close_enough and close_to_path_static:
                 st_flag = True
                 self.node.get_logger().info(
                     f"Static VALID: dist={self.static_dist:.2f}m, path_d={path_d:.2f}m"
                 )
             else:
                 if not in_front:
-                    self.node.get_logger().info("Static detected but NOT in front 180deg.")
+                    self.node.get_logger().info("Static detected but NOT in front 200deg.")
                 elif not close_enough:
                     self.node.get_logger().info(
                         f"Static farther than {self.thresh_m}m."
                     )
-                elif not close_to_path:
+                elif not close_to_path_static:
                     if path_d is None:
                         self.node.get_logger().info(
                             "Static in front but local path not ready -> ignore static."
                         )
                     else:
                         self.node.get_logger().info(
-                            f"Static in front but not blocking path (dist to path={path_d:.2f}m >0.8m)"
+                            f"Static in front but not blocking path (dist to path={path_d:.2f}m >1m)"
                         )
 
         # Blackboard 갱신
@@ -335,6 +374,12 @@ class SelectPath(py_trees.behaviour.Behaviour):
         self.pub_path = self.node.create_publisher(Path, 'selected_path', 1)  # MPC에서 최종적으로 전달하는 path
         # 현재 state 를 토픽으로 publish 할까? info로 하지 말고.
 
+        # NEW ACC 부분 추가
+        self.acc_target_m = 4   # 목표 추종 거리 (static 회피 중 acc)
+        self.acc_vmin = 0.10    # 최종 속도 비율 (원래 속도의 0.1배 = 1/10배)
+        self.acc_alpha = 0.5    # 저역통과 필터 비율 (0~1), 클수록 반응 빠름
+        self.acc_vscale_prev = 1.0  # 이전 프레임 속도 비율 저장
+
     def path_scaler(self, path_msg:Path,divide:float) -> Path|None:
         if path_msg is None:
             return None
@@ -342,6 +387,32 @@ class SelectPath(py_trees.behaviour.Behaviour):
         for ps in sp.poses:
             ps.pose.position.z = ps.pose.position.z / float(divide)
         return sp
+    
+    # NEW ACC 속도 비율 계산
+    def path_scale_ratio(self,path_msg:Path,vscale:float)->Path|None:
+        """
+        vscale in (0,1]: 1.0 = 원래 속도, 0.5 = 절반 속도, 내부적으로 divide=1/vscale로 변환.
+        """
+        if path_msg is None:
+            return None
+        vscale = max(1e-3, min(1.0,float(vscale)))
+        divide = 1.0/vscale
+        return self.path_scaler(path_msg,divide)
+    
+    # ACC vscale 계산 + 저역통과
+    def acc_compute_vscale(self,dist:float) -> float:
+        """
+        dist : 목표 동적 장애물과의 거리[m]
+        목표 4m보다 멀면 1.0(원속도), 가까우면 선형으로 감속 (최저 acc_vmin).
+        """
+        if dist is None or not math.isfinite(dist):
+            return 1.0
+        raw = dist/self.acc_target_m
+        raw = max(self.acc_vmin, min(1.0,raw))  # max(vmin, 1.0)
+        # 1차 저역통과 스무딩
+        vscale = self.acc_alpha*raw + (1.0 - self.acc_alpha)*self.acc_vscale_prev
+        self.acc_vscale_prev = vscale
+        return vscale
 
     def cb_localpath(self,msg:Path):
         self.local_path_msg = msg
@@ -381,22 +452,38 @@ class SelectPath(py_trees.behaviour.Behaviour):
                 return Status.SUCCESS
 
         # Adaptive Cruise Control
-        elif (self.bb.dynamic_distance < 2.5) and self.bb.overtake_flag==4:    # ACC할때 static distance는 고려할 필요 없음. 비상상황인 경우는 이미 위에서 정의해둠.
-            if self.acc_scaled_path is not None:
-                self.pub_path.publish(self.acc_scaled_path)
-                self.node.get_logger().info("ACC mode, distance < 2.5m")
-                return Status.SUCCESS
-            else:
-                self.pub_path.publish(self.local_path_msg)
-                self.node.get_logger().info("ACC mode, distance < 2.5m인데 acc_scaled_path가 아직 갱신이 안돼서 로컬 패스를 퍼블리쉬")
-                return Status.SUCCESS
+        # elif (self.bb.dynamic_distance < 3.5) and self.bb.overtake_flag==4:    # ACC할때 static distance는 고려할 필요 없음. 비상상황인 경우는 이미 위에서 정의해둠.
+        #     if self.acc_scaled_path is not None:
+        #         self.pub_path.publish(self.acc_scaled_path)
+        #         self.node.get_logger().info("ACC mode, distance < 3.5m")
+        #         return Status.SUCCESS
+        #     else:
+        #         self.pub_path.publish(self.local_path_msg)
+        #         self.node.get_logger().info("ACC mode, distance < 3.5m인데 acc_scaled_path가 아직 갱신이 안돼서 로컬 패스를 퍼블리쉬")
+        #         return Status.SUCCESS
+        # 동적으로 작동하도록!!
+        elif self.bb.overtake_flag == 4:
+            dist = self.bb.dynamic_distance
+            if dist < float('inf') and self.local_path_msg is not None:
+                vscale = self.acc_compute_vscale(dist)      # NEW
+                acc_path = self.path_scale_ratio(self.local_path_msg,vscale)    # NEW
+                if acc_path is not None:
+                    self.pub_path.publish(acc_path)
+                    self.node.get_logger().info(f"ACC mode: dist={dist:.2f}, vscale={vscale:.2f} (target {self.acc_target_m} m)")
+                    return Status.SUCCESS
+            # 동적 장애물 정보가 없으면 로컬 경로를 그냥 보냄.(속도 조절 X)
+            self.pub_path.publish(self.local_path_msg)
+            self.node.get_logger().info("ACC mode인데 동적장애물 인식 안해서 로컬 경로 그냥 보냄.")
+            return Status.SUCCESS
+        
 
+        # 여기는 ACC 수정 전에도 그대로 있던 놈.
         # 이 아래는 결국에 로컬 패스 주행이라 합쳐도 되는데 모드 체크를 위해서 이렇게 두개로 나눠놨습니다.
         elif self.bb.dynamic_distance < 10 or self.bb.static_distance < 10:
             self.pub_path.publish(self.local_path_msg)
             # 현재 모드 뭔지 체크용
             if self.bb.overtake_flag == 4:
-                self.node.get_logger().info("ACC mode, 2.5m < distance < 10m")
+                self.node.get_logger().info("ACC mode, 3.5m < distance < 10m")
             elif self.bb.overtake_flag == 0:
                 self.node.get_logger().info("global path 추종, 거리 10m 이내.")
             elif self.bb.overtake_flag == 1:
