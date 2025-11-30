@@ -393,32 +393,41 @@ class SelectPath(py_trees.behaviour.Behaviour):
 
         # 이 아래는 결국에 로컬 패스 주행이라 합쳐도 되는데 모드 체크를 위해서 이렇게 두개로 나눠놨습니다.
         elif self.bb.dynamic_distance < 10 or self.bb.static_distance < 10:
-            self.pub_path.publish(self.local_path_msg)
+            
             # 현재 모드 뭔지 체크용
             if self.bb.overtake_flag == 4:
+                self.pub_path.publish(self.local_path_msg)
                 self.node.get_logger().info("ACC mode, 2.5m < distance < 10m")
             elif self.bb.overtake_flag == 0:
+                self.pub_path.publish(self.local_path_msg)
                 self.node.get_logger().info("global path 추종, 거리 10m 이내.")
             elif self.bb.overtake_flag == 1:
-                self.node.get_logger().info("Static 회피 모드, 거리 10m 이내.")
+                self.pub_path.publish(self.acc_scaled_path)
+                self.node.get_logger().info("Static 회피 모드, 거리 10m 이내. 속도 2배 이하로!!")
             elif self.bb.overtake_flag == 2:
+                self.pub_path.publish(self.local_path_msg)
                 self.node.get_logger().info("Dynamic 추월 모드, 거리 10m 이내.")
             else:
+                self.pub_path.publish(self.local_path_msg)
                 self.node.get_logger().warn(f"unknown overtake_flag!!! {self.bb.overtake_flag} (거리 10m 이내)")
             return Status.SUCCESS
 
         else:   # 주변에 장애물 없는 경우, Local path에서 0을 줄것. 쨋든 나는 로컬패스 주는대로 주행하면 됨. 아직은 품질 평가 X.
-            self.pub_path.publish(self.local_path_msg)
             # 이건 현재 모드 체크용
             if self.bb.overtake_flag == 4:
+                self.pub_path.publish(self.local_path_msg)
                 self.node.get_logger().info("ACC mode, 유효 장애물 X")
             elif self.bb.overtake_flag == 0:
+                self.pub_path.publish(self.local_path_msg)
                 self.node.get_logger().info("global path 추종, 유효 장애물 X")
             elif self.bb.overtake_flag == 1:
+                self.pub_path.publish(self.acc_scaled_path)
                 self.node.get_logger().info("Static 회피 모드, 유효 장애물 X")
             elif self.bb.overtake_flag == 2:
+                self.pub_path.publish(self.local_path_msg)
                 self.node.get_logger().info("Dynamic 추월 모드, 유효 장애물 X")
             else:
+                self.pub_path.publish(self.local_path_msg)
                 self.node.get_logger().warn(f"unknown overtake_flag!!! {self.bb.overtake_flag} (유효 장애물 X)")
             return Status.SUCCESS    
         # return Status.SUCCESS , 위에 각 케이스에 모두 써뒀음.
