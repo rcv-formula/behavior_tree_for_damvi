@@ -1,0 +1,215 @@
+#pragma once
+
+#include <cmath>
+#include <mutex>
+#include <optional>
+#include <limits>
+#include <memory>
+#include <string>
+#include <utility>
+
+#include "rclcpp/rclcpp.hpp"
+
+#include "std_msgs/msg/bool.hpp"
+#include "std_msgs/msg/string.hpp"
+
+#include "nav_msgs/msg/odometry.hpp"
+#include "nav_msgs/msg/path.hpp"
+#include "geometry_msgs/msg/point_stamped.hpp"
+
+#include "behaviortree_cpp_v3/action_node.h"
+#include "behaviortree_cpp_v3/basic_types.h"
+
+namespace behavior_tree_cpp_pkg
+{
+
+// ---- small helpers to keep python-like log strings ----
+inline std::string py_str_bool(bool b) { return b ? "True" : "False"; }
+
+inline std::string py_str_double(double v)
+{
+  // python str() 느낌으로 너무 길어지지 않게
+  char buf[64];
+  std::snprintf(buf, sizeof(buf), "%.6g", v);
+  return std::string(buf);
+}
+
+// ---- shared storage (like blackboard + node internal state) ----
+struct SharedData
+{
+  std::mutex mtx;
+
+  // critical_ok (health monitor)
+  bool   critical_ok{false};
+  double critical_t{0.0};
+
+  // ego odom
+  bool   ego_ok{false};
+  double ego_t{0.0};
+  double ego_x{0.0};
+  double ego_y{0.0};
+  double ego_yaw{0.0};
+  double ego_vx{0.0};
+  double ego_vy{0.0};
+
+  // dynamic obstacle odom
+  bool   dyn_ok{false};
+  double dyn_t{0.0};
+  double dyn_x{0.0};
+  double dyn_y{0.0};
+  double dyn_vx{0.0};
+  double dyn_vy{0.0};
+
+  // static obstacle point
+  bool   st_ok{false};
+  double st_t{0.0};
+  double st_x{0.0};
+  double st_y{0.0};
+
+  // global path (for static-path distance)
+  nav_msgs::msg::Path::SharedPtr global_path{nullptr};
+
+  // local path (for SelectPath)
+  nav_msgs::msg::Path::SharedPtr local_path{nullptr};
+  std::pair<int32_t, uint32_t> local_stamp{0, 0};
+};
+
+// ---- math utilities ----
+double yaw_from_quat(const geometry_msgs::msg::Quaternion& q);
+
+std::optional<double> point_to_path_min_dist(double px, double py,
+                                             const nav_msgs::msg::Path::SharedPtr& path_msg);
+
+bool is_in_front_180(double rel_x, double rel_y, double ego_yaw, double half_angle_deg = 100.0);
+
+// -----------------------
+// CondCriticalOK (subscribes /system/critical_ok + /system/critical_reason)
+// -----------------------
+class CondCriticalOK : public BT::SyncActionNode
+{
+public:
+  CondCriticalOK(const std::string& name, const BT::NodeConfiguration& config,
+                 const rclcpp::Node::SharedPtr& node,
+                 const std::shared_ptr<SharedData>& shared);
+
+  static BT::PortsList providedPorts() { return {}; }
+
+  BT::NodeStatus tick() override;
+
+private:
+  double now() const;
+
+  rclcpp::Node::SharedPtr node_;
+  std::shared_ptr<SharedData> shared_;
+
+  double fresh_{0.5};
+
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr sub_ok_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_reason_;
+};
+
+// -----------------------
+// EmergencyStop
+// -----------------------
+class EmergencyStop : public BT::SyncActionNode
+{
+public:
+  EmergencyStop(const std::string& name, const BT::NodeConfiguration& config,
+                const rclcpp::Node::SharedPtr& node);
+
+  static BT::PortsList providedPorts() { return {}; }
+
+  BT::NodeStatus tick() override;
+
+private:
+  rclcpp::Node::SharedPtr node_;
+  bool succeed_{false};
+};
+
+// -----------------------
+// CheckObstacle (your Python CheckObstacle behaviour)
+// - Outputs: dynamic_obstacle, static_obstacle, dynamic_distance, static_distance, prioritize_dynamic_flag
+// -----------------------
+class CheckObstacleNode : public BT::SyncActionNode
+{
+public:
+  CheckObstacleNode(const std::string& name, const BT::NodeConfiguration& config,
+                    const rclcpp::Node::SharedPtr& node,
+                    const std::shared_ptr<SharedData>& shared);
+
+  static BT::PortsList providedPorts()
+  {
+    return {
+      BT::OutputPort<bool>("dynamic_obstacle"),
+      BT::OutputPort<bool>("static_obstacle"),
+      BT::OutputPort<double>("dynamic_distance"),
+      BT::OutputPort<double>("static_distance"),
+      BT::OutputPort<bool>("prioritize_dynamic_flag"),
+    };
+  }
+
+  BT::NodeStatus tick() override;
+
+private:
+  double now() const;
+
+  rclcpp::Node::SharedPtr node_;
+  std::shared_ptr<SharedData> shared_;
+
+  // params (same semantics as python)
+  double thresh_m_{15.0};
+  double estop_thresh_m_{0.5}; // kept for parity, not used directly (python comments)
+  double fresh_{0.3};
+  double half_angle_deg_{100.0};
+
+  // state
+  bool st_flag_memory_{false};
+  nav_msgs::msg::Path::SharedPtr global_path_msg_{nullptr};
+
+  // ros i/o
+  rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr publish_flag_;
+
+  rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr sub_global_path_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_ego_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_dyn_;
+  rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr sub_static_;
+};
+
+// -----------------------
+// SelectPath (your Python SelectPath behaviour)
+// - Inputs: dynamic_distance, static_distance
+// - Output: overtake_flag
+// -----------------------
+class SelectPathNode : public BT::SyncActionNode
+{
+public:
+  SelectPathNode(const std::string& name, const BT::NodeConfiguration& config,
+                 const rclcpp::Node::SharedPtr& node,
+                 const std::shared_ptr<SharedData>& shared);
+
+  static BT::PortsList providedPorts()
+  {
+    return {
+      BT::InputPort<double>("dynamic_distance"),
+      BT::InputPort<double>("static_distance"),
+      BT::OutputPort<double>("overtake_flag"),
+    };
+  }
+
+  BT::NodeStatus tick() override;
+
+private:
+  nav_msgs::msg::Path path_scaler(const nav_msgs::msg::Path& path_msg, double divide);
+
+  rclcpp::Node::SharedPtr node_;
+  std::shared_ptr<SharedData> shared_;
+
+  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub_path_;
+  rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr sub_local_;
+
+  std::pair<int32_t, uint32_t> local_last_stamp_{0, 0};
+  std::optional<nav_msgs::msg::Path> emergency_scaled_path_;
+  std::optional<nav_msgs::msg::Path> acc_scaled_path_;
+};
+
+}  // namespace behavior_tree_cpp_pkg
