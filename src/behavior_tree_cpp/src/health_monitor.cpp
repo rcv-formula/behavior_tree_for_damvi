@@ -87,7 +87,7 @@ private:
       fail_since_.reset();
       std_msgs::msg::Bool b; b.data = true;
       std_msgs::msg::String s; s.data = "ok";
-      pub_ok_->publish(b);
+      pub_ok_->publish(b); // 수정 필요
       pub_rs_->publish(s);
       RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000, "In this tick, sensors are ok. Now go to next tick");
       return;
@@ -98,7 +98,8 @@ private:
 
     std_msgs::msg::Bool b; b.data = !hard_fail;
     std_msgs::msg::String s; s.data = hard_fail ? reason_ : "debouncing";
-    pub_ok_->publish(b);
+    b.data = true;
+    pub_ok_->publish(b); // 수정 필요
     pub_rs_->publish(s);
 
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "In this tick, sensors are down. Now go to next tick");
