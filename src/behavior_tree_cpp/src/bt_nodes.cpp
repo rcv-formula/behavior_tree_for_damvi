@@ -49,6 +49,8 @@ CondCriticalOK::CondCriticalOK(const std::string& name, const BT::NodeConfigurat
                                const std::shared_ptr<SharedData>& shared)
 : BT::SyncActionNode(name, config), node_(node), shared_(shared)
 {
+  node_->declare_parameter<bool>("bypass_critical", false); // 테스트용으로 센서 상태 ok라고 보고 진행하기.
+
   fresh_ = node_->declare_parameter<double>("critical_fresh", 0.5);
 
   sub_ok_ = node_->create_subscription<std_msgs::msg::Bool>(
@@ -79,6 +81,15 @@ double CondCriticalOK::now() const
 
 BT::NodeStatus CondCriticalOK::tick()
 {
+  bool bypass = false;
+  node_->get_parameter("bypass_critical", bypass);
+
+  if (bypass)
+  {
+    RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000, "CondCriticalOK bypassed (test mode)");
+    return BT::NodeStatus::SUCCESS;
+  }
+
   const double now_t = now();
   bool ok;
   double t;
@@ -237,7 +248,7 @@ BT::NodeStatus CheckObstacleNode::tick()
 
   if (!ego_ok || ego_t == 0.0 || (now_t - ego_t) > fresh_)
   {
-    RCLCPP_WARN(node_->get_logger(), "/odom can't subscribable. CheckObstacle Failure.");
+    RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000, "/odom can't subscribable. CheckObstacle Failure.");
     return BT::NodeStatus::FAILURE;
   }
 
@@ -249,10 +260,16 @@ BT::NodeStatus CheckObstacleNode::tick()
   // ------------------------
   // Dynamic obstacle 판정
   // ------------------------
-  const bool dyn_stale = (!dyn_ok || dyn_t == 0.0 || (now_t - dyn_t) > fresh_);
-  if (dyn_stale)
+  const bool dyn_never = (!dyn_ok || dyn_t == 0.0);
+  const bool dyn_stale = (dyn_ok && dyn_t != 0.0 && (now_t - dyn_t) > fresh_);
+  if (dyn_never)
   {
-    RCLCPP_WARN(node_->get_logger(), "/dynamic_obstacle can't subscribable. CheckObstacle Failure.");
+    RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 3000, "No dynamic_obstacle detected yet.");
+    dyn_flag = false;
+    dynamic_dist = 100.0;
+  }
+  else if (dyn_stale){
+    RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000, "/dynamic_obstacle stale: age=%.3fs (fresh = %.3fs).", (now_t-dyn_t),fresh_);
     dyn_flag = false;
     dynamic_dist = 100.0;
   }
@@ -264,7 +281,7 @@ BT::NodeStatus CheckObstacleNode::tick()
 
     {
       std::string log = std::string("Dynamic obj :: ") + py_str_double(dynamic_dist) + " meters.";
-      RCLCPP_INFO(node_->get_logger(), "%s", log.c_str());
+      RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000, "%s", log.c_str());
     }
 
     const bool in_front = is_in_front_180(dx, dy, ego_yaw, half_angle_deg_);
@@ -277,18 +294,18 @@ BT::NodeStatus CheckObstacleNode::tick()
       std::snprintf(buf, sizeof(buf),
                     "Dynamic VALID: dist=%.2fm, front180=%s",
                     dynamic_dist, in_front ? "True" : "False");
-      RCLCPP_INFO(node_->get_logger(), "%s", buf);
+      RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 500, "%s", buf);
     }
     else
     {
       if (!in_front)
       {
-        RCLCPP_INFO(node_->get_logger(), "Dynamic detected but NOT in front 180deg.");
+        RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000, "Dynamic detected but NOT in front 180deg.");
       }
       else if (!close_enough)
       {
         std::string log = std::string("Dynamic farther than ") + py_str_double(thresh_m_) + "m.";
-        RCLCPP_INFO(node_->get_logger(), "%s", log.c_str());
+        RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000, "%s", log.c_str());
       }
     }
   }
@@ -296,10 +313,16 @@ BT::NodeStatus CheckObstacleNode::tick()
   // ------------------------
   // Static obstacle 판정
   // ------------------------
-  const bool st_stale = (!st_ok || st_t == 0.0 || (now_t - st_t) > fresh_);
-  if (st_stale)
+  const bool st_never = (!st_ok || st_t == 0.0);
+  const bool st_stale = (st_ok && st_t != 0.0 && (now_t - st_t) > fresh_);
+  if (st_never){
+    RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 3000, "No /static_obstacle detected yet.");
+    st_flag = false;
+    static_dist = 100.0;
+  }
+  else if (st_stale)
   {
-    RCLCPP_WARN(node_->get_logger(), "/static_obstacle can't subscribable. CheckObstacle Failure.");
+    RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000, "/static_obstacle stale: age=%.3fs (fresh=%.3fs).", (now_t-st_t), fresh_);
     st_flag = false;
     static_dist = 100.0;
   }
@@ -311,7 +334,7 @@ BT::NodeStatus CheckObstacleNode::tick()
 
     {
       std::string log = std::string("Static obj :: ") + py_str_double(static_dist) + " meters.";
-      RCLCPP_INFO(node_->get_logger(), "%s", log.c_str());
+      RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000, "%s", log.c_str());
     }
 
     const bool in_front = is_in_front_180(sx, sy, ego_yaw, half_angle_deg_);
@@ -339,24 +362,24 @@ BT::NodeStatus CheckObstacleNode::tick()
       std::snprintf(buf, sizeof(buf),
                     "Static VALID: dist=%.2fm, path_d=%.2fm",
                     static_dist, path_d_opt ? path_d : 0.0);
-      RCLCPP_INFO(node_->get_logger(), "%s", buf);
+      RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 500, "%s", buf);
     }
     else
     {
       if (!in_front)
       {
-        RCLCPP_INFO(node_->get_logger(), "Static detected but NOT in front 180deg.");
+        RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000, "Static detected but NOT in front 180deg.");
       }
       else if (!close_enough)
       {
         std::string log = std::string("Static farther than ") + py_str_double(thresh_m_) + "m.";
-        RCLCPP_INFO(node_->get_logger(), "%s", log.c_str());
+        RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000, "%s", log.c_str());
       }
       else if (!close_to_path)
       {
         if (!path_d_opt)
         {
-          RCLCPP_INFO(node_->get_logger(), "Static in front but local path not ready -> ignore static.");
+          RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000, "Static in front but local path not ready -> ignore static.");
         }
         else
         {
@@ -364,7 +387,7 @@ BT::NodeStatus CheckObstacleNode::tick()
           std::snprintf(buf, sizeof(buf),
                         "Static in front but not blocking path (dist to path=%.2fm >0.8m)",
                         path_d);
-          RCLCPP_INFO(node_->get_logger(), "%s", buf);
+          RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000, "%s", buf);
         }
       }
     }
@@ -405,7 +428,7 @@ SelectPathNode::SelectPathNode(const std::string& name, const BT::NodeConfigurat
   // Python: create_subscription(Path, 'Path', self.cb_localpath, 1)
   // User: /Path 가 토픽 이름
   rclcpp::QoS qos(1);
-  qos.reliable().transient_local();
+  qos.reliable(); // local_path가 qos가 이제는 transient local이 아니라 그냥 reliable로갓네요.
 
   sub_local_ = node_->create_subscription<nav_msgs::msg::Path>(
     "/Path", qos,
@@ -453,8 +476,8 @@ BT::NodeStatus SelectPathNode::tick()
   if (stamp != local_last_stamp_)
   {
     local_last_stamp_ = stamp;
-    emergency_scaled_path_ = path_scaler(*lp, 10.0);
-    acc_scaled_path_ = path_scaler(*lp, 2.0);
+    // emergency_scaled_path_ = path_scaler(*lp, 10.0);
+    // acc_scaled_path_ = path_scaler(*lp, 2.0);
   }
 
   double dynamic_distance = 100.0;
@@ -465,6 +488,7 @@ BT::NodeStatus SelectPathNode::tick()
   // Emergency mode (추월X)
   if ((dynamic_distance <= 1.0 || static_distance <= 1.0) && overtake_flag != 2.0)
   {
+    emergency_scaled_path_ = path_scaler(*lp, 10.0);
     if (emergency_scaled_path_)
     {
       pub_path_->publish(*emergency_scaled_path_);
@@ -478,6 +502,7 @@ BT::NodeStatus SelectPathNode::tick()
   // Emergency mode (추월O)
   else if ((dynamic_distance <= 0.5 || static_distance <= 1.0) && overtake_flag == 2.0)
   {
+    emergency_scaled_path_ = path_scaler(*lp, 10.0);
     if (emergency_scaled_path_)
     {
       pub_path_->publish(*emergency_scaled_path_);
@@ -488,9 +513,11 @@ BT::NodeStatus SelectPathNode::tick()
     RCLCPP_INFO(node_->get_logger(), "추월O, Emergency 인데 emergency_scaled_path가 아직 갱신이 안돼서 로컬 패스를 퍼블리쉬함!!");
     return BT::NodeStatus::SUCCESS;
   }
-  // ACC mode (overtake_flag==4)
-  else if ((dynamic_distance < 2.5) && overtake_flag == 4.0)
+  // ACC mode -> STATIC 회피 모드 (overtake_flag==4)
+  else if ((static_distance < 2.5 || dynamic_distance < 2.5) && overtake_flag == 4.0)
   {
+    acc_scaled_path_ = path_scaler(*lp, 2.0);
+    additional_slowdown = 40;
     if (acc_scaled_path_)
     {
       pub_path_->publish(*acc_scaled_path_);
@@ -504,7 +531,34 @@ BT::NodeStatus SelectPathNode::tick()
   // distance < 10m
   else if (dynamic_distance < 10.0 || static_distance < 10.0)
   {
-    if (overtake_flag == 4.0)
+    if (additional_slowdown){
+      nav_msgs::msg::Path out = *lp;
+      out = path_scaler(out, 2.0);
+      additional_slowdown--;
+      pub_path_->publish(out);
+      if (overtake_flag == 4.0)
+      {
+        RCLCPP_INFO(node_->get_logger(), "ACC mode, 2.5m < distance < 10m");
+      }
+      else if (overtake_flag == 0.0)
+      {
+        RCLCPP_INFO(node_->get_logger(), "global path 추종, 거리 10m 이내.");
+      }
+      else if (overtake_flag == 1.0)
+      {
+        RCLCPP_INFO(node_->get_logger(), "Static 회피 모드, 거리 10m 이내. 속도 2배 이하로!!");
+      }
+      else if (overtake_flag == 2.0)
+      {
+        RCLCPP_INFO(node_->get_logger(), "Dynamic 추월 모드, 거리 10m 이내.");
+      }
+      else
+      {
+        std::string log = std::string("unknown overtake_flag!!! ") + py_str_double(overtake_flag) + " (거리 10m 이내)";
+        RCLCPP_WARN(node_->get_logger(), "%s", log.c_str());
+      }
+    }
+    else if (overtake_flag == 4.0)
     {
       pub_path_->publish(*lp);
       RCLCPP_INFO(node_->get_logger(), "ACC mode, 2.5m < distance < 10m");
@@ -516,8 +570,7 @@ BT::NodeStatus SelectPathNode::tick()
     }
     else if (overtake_flag == 1.0)
     {
-      if (acc_scaled_path_) pub_path_->publish(*acc_scaled_path_);
-      else pub_path_->publish(*lp);
+      pub_path_->publish(*lp);
       RCLCPP_INFO(node_->get_logger(), "Static 회피 모드, 거리 10m 이내. 속도 2배 이하로!!");
     }
     else if (overtake_flag == 2.0)
@@ -536,7 +589,34 @@ BT::NodeStatus SelectPathNode::tick()
   // no obstacle nearby
   else
   {
-    if (overtake_flag == 4.0)
+    if (additional_slowdown){
+      nav_msgs::msg::Path out = *lp;
+      out = path_scaler(out, 2.0);
+      additional_slowdown--;
+      pub_path_->publish(out);
+      if (overtake_flag == 4.0)
+      {
+        RCLCPP_INFO(node_->get_logger(), "ACC mode, 유효 장애물 X");
+      }
+      else if (overtake_flag == 0.0)
+      {
+        RCLCPP_INFO(node_->get_logger(), "global path 추종, 유효 장애물 X");
+      }
+      else if (overtake_flag == 1.0)
+      {
+        RCLCPP_INFO(node_->get_logger(), "Static 회피 모드, 유효 장애물 X");
+      }
+      else if (overtake_flag == 2.0)
+      {
+        RCLCPP_INFO(node_->get_logger(), "Dynamic 추월 모드, 유효 장애물 X");
+      }
+      else
+      {
+        std::string log = std::string("unknown overtake_flag!!! ") + py_str_double(overtake_flag) + " (유효 장애물 X)";
+        RCLCPP_WARN(node_->get_logger(), "%s", log.c_str());
+      }
+    }
+    else if (overtake_flag == 4.0)
     {
       pub_path_->publish(*lp);
       RCLCPP_INFO(node_->get_logger(), "ACC mode, 유효 장애물 X");
@@ -548,8 +628,7 @@ BT::NodeStatus SelectPathNode::tick()
     }
     else if (overtake_flag == 1.0)
     {
-      if (acc_scaled_path_) pub_path_->publish(*acc_scaled_path_);
-      else pub_path_->publish(*lp);
+      pub_path_->publish(*lp);
       RCLCPP_INFO(node_->get_logger(), "Static 회피 모드, 유효 장애물 X");
     }
     else if (overtake_flag == 2.0)

@@ -60,7 +60,7 @@ private:
       if (n - last_[k] > to)
       {
         reason_ = "timeout:" + k;
-        RCLCPP_WARN(get_logger(), "%s", reason_.c_str());
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "%s", reason_.c_str());
         return false;
       }
     }
@@ -89,7 +89,7 @@ private:
       std_msgs::msg::String s; s.data = "ok";
       pub_ok_->publish(b);
       pub_rs_->publish(s);
-      RCLCPP_WARN(get_logger(), "In this tick, sensors are ok. Now go to next tick");
+      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000, "In this tick, sensors are ok. Now go to next tick");
       return;
     }
 
@@ -101,7 +101,7 @@ private:
     pub_ok_->publish(b);
     pub_rs_->publish(s);
 
-    RCLCPP_WARN(get_logger(), "In this tick, sensors are down. Now go to next tick");
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "In this tick, sensors are down. Now go to next tick");
   }
 
   std::string imu_topic_, lidar_topic_, vesc_topic_;
