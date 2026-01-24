@@ -145,7 +145,7 @@ CheckObstacleNode::CheckObstacleNode(const std::string& name, const BT::NodeConf
   publish_flag_ = node_->create_publisher<geometry_msgs::msg::PointStamped>("/obj_flag", 1);
 
   rclcpp::QoS path_qos(1);
-  path_qos.reliable();
+  path_qos.reliable().transient_local();
 
   sub_global_path_ = node_->create_subscription<nav_msgs::msg::Path>(
     "/global_path", path_qos,
