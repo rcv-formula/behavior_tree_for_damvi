@@ -335,8 +335,8 @@ BT::NodeStatus CheckObstacleNode::tick()
     bool close_to_path = false;
     if (path_d_opt)
     {
-      if (!st_flag_memory_ && path_d <= 1.0) close_to_path = true;
-      else if (st_flag_memory_ && path_d <= 2.0) close_to_path = true;
+      if (!st_flag_memory_ && path_d <= 0.5) close_to_path = true;
+      else if (st_flag_memory_ && path_d <= 1.0) close_to_path = true;
       else close_to_path = false;
     }
     else
