@@ -319,12 +319,14 @@ BT::NodeStatus CheckObstacleNode::tick()
     RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 3000, "No /static_obstacle detected yet.");
     st_flag = false;
     static_dist = 100.0;
+    st_flag_memory_ = false;
   }
   else if (st_stale)
   {
     RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000, "/static_obstacle stale: age=%.3fs (fresh=%.3fs).", (now_t-st_t), fresh_);
     st_flag = false;
     static_dist = 100.0;
+    st_flag_memory_ = false;
   }
   else
   {
@@ -557,6 +559,7 @@ BT::NodeStatus SelectPathNode::tick()
         std::string log = std::string("unknown overtake_flag!!! ") + py_str_double(overtake_flag) + " (거리 10m 이내)";
         RCLCPP_WARN(node_->get_logger(), "%s", log.c_str());
       }
+      return BT::NodeStatus::SUCCESS;
     }
     else if (overtake_flag == 4.0)
     {
@@ -615,6 +618,7 @@ BT::NodeStatus SelectPathNode::tick()
         std::string log = std::string("unknown overtake_flag!!! ") + py_str_double(overtake_flag) + " (유효 장애물 X)";
         RCLCPP_WARN(node_->get_logger(), "%s", log.c_str());
       }
+      return BT::NodeStatus::SUCCESS;
     }
     else if (overtake_flag == 4.0)
     {
