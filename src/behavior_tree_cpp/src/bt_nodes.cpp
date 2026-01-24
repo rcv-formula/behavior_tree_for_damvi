@@ -260,16 +260,10 @@ BT::NodeStatus CheckObstacleNode::tick()
   // ------------------------
   // Dynamic obstacle 판정
   // ------------------------
-  const bool dyn_never = (!dyn_ok || dyn_t == 0.0);
-  const bool dyn_stale = (dyn_ok && dyn_t != 0.0 && (now_t - dyn_t) > fresh_);
-  if (dyn_never)
+  const bool dyn_stale = (!dyn_ok || dyn_t == 0.0 || (now_t - dyn_t) > fresh_);
+  if (dyn_stale)
   {
-    RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 3000, "No dynamic_obstacle detected yet.");
-    dyn_flag = false;
-    dynamic_dist = 100.0;
-  }
-  else if (dyn_stale){
-    RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000, "/dynamic_obstacle stale: age=%.3fs (fresh = %.3fs).", (now_t-dyn_t),fresh_);
+    RCLCPP_WARN(node_->get_logger(), "/dynamic_obstacle can't subscribable. CheckObstacle Failure.");
     dyn_flag = false;
     dynamic_dist = 100.0;
   }
@@ -313,17 +307,10 @@ BT::NodeStatus CheckObstacleNode::tick()
   // ------------------------
   // Static obstacle 판정
   // ------------------------
-  const bool st_never = (!st_ok || st_t == 0.0);
-  const bool st_stale = (st_ok && st_t != 0.0 && (now_t - st_t) > fresh_);
-  if (st_never){
-    RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 3000, "No /static_obstacle detected yet.");
-    st_flag = false;
-    static_dist = 100.0;
-    st_flag_memory_ = false;
-  }
-  else if (st_stale)
+  const bool st_stale = (!st_ok || st_t == 0.0 || (now_t - st_t) > fresh_);
+  if (st_stale)
   {
-    RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000, "/static_obstacle stale: age=%.3fs (fresh=%.3fs).", (now_t-st_t), fresh_);
+    RCLCPP_WARN(node_->get_logger(), "/static_obstacle can't subscribable. CheckObstacle Failure.");
     st_flag = false;
     static_dist = 100.0;
     st_flag_memory_ = false;
