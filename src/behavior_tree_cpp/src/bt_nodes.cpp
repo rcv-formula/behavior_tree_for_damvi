@@ -399,6 +399,7 @@ BT::NodeStatus CheckObstacleNode::tick()
   msg.point.y = st_flag ? 1.0 : 0.0;
   msg.point.z = prioritize_dynamic_flag ? 1.0 : 0.0;
   publish_flag_->publish(msg);
+  RCLCPP_INFO(node_->get_logger(), "obj_flag published.");
 
   // Python: 항상 FAILURE로 다음 노드(SelectPath)로 넘어가게 함
   return BT::NodeStatus::FAILURE;
