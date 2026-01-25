@@ -62,6 +62,13 @@ ament_target_dependencies(behavior_tree_tester
   geometry_msgs
 )
 
+add_executable(check_static_obstacle_only src/check_static_obstacle_only.cpp)
+ament_target_dependencies(check_static_obstacle_only
+  rclcpp
+  nav_msgs
+  geometry_msgs
+)
+
 # 이 아래 add executable은 원래 있던놈.
 add_executable(behavior_tree src/behavior_tree.cpp)
 target_include_directories(behavior_tree PUBLIC
@@ -79,6 +86,7 @@ install(TARGETS
   health_monitor
   behavior_tree_tester
   behavior_tree
+  check_static_obstacle_only
   DESTINATION lib/${PROJECT_NAME}
 ) # install(TARGETS ...)는 colcon build는 "빌드"만 하고, ros2 run은 install 공간에 있는 실행파일을 찾아 실행합니다.
   # 따라서 install 폴더 안에 넣어주는 역할임!
