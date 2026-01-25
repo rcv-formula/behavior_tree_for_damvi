@@ -173,7 +173,7 @@ private:
         }
         else if (!path_d_opt)
         {
-          RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000, "Static in front but global path not ready -> ignore.");
+          RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000, "Static in front but global path와의 거리 계산 안됨 -> ignore.");
         }
         else
         {
