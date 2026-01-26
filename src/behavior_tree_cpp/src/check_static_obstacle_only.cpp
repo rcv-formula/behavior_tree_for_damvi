@@ -188,8 +188,8 @@ private:
     // publish obj_flag: x=0(dynamic 없음), y=static flag, z=0(prioritize_dynamic 없음)
     geometry_msgs::msg::PointStamped out;
     out.header.stamp = get_clock()->now();
-    out.point.x = 0.0;
-    out.point.y = st_flag ? 1.0 : 0.0;
+    out.point.x = st_flag ? 1.0 : 0.0;  // PPcontroller가 본선에서 ACC 용으로 직접 사용
+    out.point.y = 0.0;  // local path는 y를 받는데 지금 local path는 본선에서 그냥 global만 보내게 할거라 static 정보 안보낼거임.
     out.point.z = 0.0;
     pub_flag_->publish(out);
 
