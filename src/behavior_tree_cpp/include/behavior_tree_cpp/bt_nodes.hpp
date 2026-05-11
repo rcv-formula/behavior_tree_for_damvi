@@ -178,7 +178,7 @@ private:
 // -----------------------
 // SelectPath (your Python SelectPath behaviour)
 // - Inputs: dynamic_distance, static_distance
-// - Output: overtake_flag
+// - Output: mode flag from local planner (0=BASE, 1=AVOID, 2=ACC)
 // -----------------------
 class SelectPathNode : public BT::SyncActionNode
 {
