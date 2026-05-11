@@ -476,8 +476,8 @@ BT::NodeStatus SelectPathNode::tick()
   if (stamp != local_last_stamp_)
   {
     local_last_stamp_ = stamp;
-    // emergency_scaled_path_ = path_scaler(*lp, 10.0);
-    // acc_scaled_path_ = path_scaler(*lp, 2.0);
+    emergency_scaled_path_ = path_scaler(*lp, 10.0);
+    acc_scaled_path_ = path_scaler(*lp, 2.0);
   }
 
   double dynamic_distance = 100.0;
@@ -488,7 +488,7 @@ BT::NodeStatus SelectPathNode::tick()
   // Emergency mode (추월X)
   if ((dynamic_distance <= 1.0 || static_distance <= 1.0) && overtake_flag != 2.0)
   {
-    emergency_scaled_path_ = path_scaler(*lp, 10.0);
+    // emergency_scaled_path_ = path_scaler(*lp, 10.0);
     if (emergency_scaled_path_)
     {
       pub_path_->publish(*emergency_scaled_path_);
@@ -502,7 +502,7 @@ BT::NodeStatus SelectPathNode::tick()
   // Emergency mode (추월O)
   else if ((dynamic_distance <= 0.5 || static_distance <= 1.0) && overtake_flag == 2.0)
   {
-    emergency_scaled_path_ = path_scaler(*lp, 10.0);
+    // emergency_scaled_path_ = path_scaler(*lp, 10.0);
     if (emergency_scaled_path_)
     {
       pub_path_->publish(*emergency_scaled_path_);
@@ -516,8 +516,8 @@ BT::NodeStatus SelectPathNode::tick()
   // ACC mode -> STATIC 회피 모드 (overtake_flag==4)
   else if ((static_distance < 2.5 || dynamic_distance < 2.5) && overtake_flag == 4.0)
   {
-    acc_scaled_path_ = path_scaler(*lp, 2.0);
-    additional_slowdown = 40;
+    // acc_scaled_path_ = path_scaler(*lp, 2.0);
+    // additional_slowdown = 40;
     if (acc_scaled_path_)
     {
       pub_path_->publish(*acc_scaled_path_);
@@ -531,34 +531,35 @@ BT::NodeStatus SelectPathNode::tick()
   // distance < 10m
   else if (dynamic_distance < 10.0 || static_distance < 10.0)
   {
-    if (additional_slowdown){
-      nav_msgs::msg::Path out = *lp;
-      out = path_scaler(out, 2.0);
-      additional_slowdown--;
-      pub_path_->publish(out);
-      if (overtake_flag == 4.0)
-      {
-        RCLCPP_INFO(node_->get_logger(), "ACC mode, 2.5m < distance < 10m");
-      }
-      else if (overtake_flag == 0.0)
-      {
-        RCLCPP_INFO(node_->get_logger(), "global path 추종, 거리 10m 이내.");
-      }
-      else if (overtake_flag == 1.0)
-      {
-        RCLCPP_INFO(node_->get_logger(), "Static 회피 모드, 거리 10m 이내. 속도 2배 이하로!!");
-      }
-      else if (overtake_flag == 2.0)
-      {
-        RCLCPP_INFO(node_->get_logger(), "Dynamic 추월 모드, 거리 10m 이내.");
-      }
-      else
-      {
-        std::string log = std::string("unknown overtake_flag!!! ") + py_str_double(overtake_flag) + " (거리 10m 이내)";
-        RCLCPP_WARN(node_->get_logger(), "%s", log.c_str());
-      }
-    }
-    else if (overtake_flag == 4.0)
+    // if (additional_slowdown){
+    //   nav_msgs::msg::Path out = *lp;
+    //   out = path_scaler(out, 2.0);
+    //   additional_slowdown--;
+    //   pub_path_->publish(out);
+    //   if (overtake_flag == 4.0)
+    //   {
+    //     RCLCPP_INFO(node_->get_logger(), "ACC mode, 2.5m < distance < 10m");
+    //   }
+    //   else if (overtake_flag == 0.0)
+    //   {
+    //     RCLCPP_INFO(node_->get_logger(), "global path 추종, 거리 10m 이내.");
+    //   }
+    //   else if (overtake_flag == 1.0)
+    //   {
+    //     RCLCPP_INFO(node_->get_logger(), "Static 회피 모드, 거리 10m 이내. 속도 2배 이하로!!");
+    //   }
+    //   else if (overtake_flag == 2.0)
+    //   {
+    //     RCLCPP_INFO(node_->get_logger(), "Dynamic 추월 모드, 거리 10m 이내.");
+    //   }
+    //   else
+    //   {
+    //     std::string log = std::string("unknown overtake_flag!!! ") + py_str_double(overtake_flag) + " (거리 10m 이내)";
+    //     RCLCPP_WARN(node_->get_logger(), "%s", log.c_str());
+    //   }
+    // }
+    // else if (overtake_flag == 4.0)
+    if (overtake_flag == 4.0)
     {
       pub_path_->publish(*lp);
       RCLCPP_INFO(node_->get_logger(), "ACC mode, 2.5m < distance < 10m");
@@ -589,34 +590,35 @@ BT::NodeStatus SelectPathNode::tick()
   // no obstacle nearby
   else
   {
-    if (additional_slowdown){
-      nav_msgs::msg::Path out = *lp;
-      out = path_scaler(out, 2.0);
-      additional_slowdown--;
-      pub_path_->publish(out);
-      if (overtake_flag == 4.0)
-      {
-        RCLCPP_INFO(node_->get_logger(), "ACC mode, 유효 장애물 X");
-      }
-      else if (overtake_flag == 0.0)
-      {
-        RCLCPP_INFO(node_->get_logger(), "global path 추종, 유효 장애물 X");
-      }
-      else if (overtake_flag == 1.0)
-      {
-        RCLCPP_INFO(node_->get_logger(), "Static 회피 모드, 유효 장애물 X");
-      }
-      else if (overtake_flag == 2.0)
-      {
-        RCLCPP_INFO(node_->get_logger(), "Dynamic 추월 모드, 유효 장애물 X");
-      }
-      else
-      {
-        std::string log = std::string("unknown overtake_flag!!! ") + py_str_double(overtake_flag) + " (유효 장애물 X)";
-        RCLCPP_WARN(node_->get_logger(), "%s", log.c_str());
-      }
-    }
-    else if (overtake_flag == 4.0)
+    // if (additional_slowdown){
+    //   nav_msgs::msg::Path out = *lp;
+    //   out = path_scaler(out, 2.0);
+    //   additional_slowdown--;
+    //   pub_path_->publish(out);
+    //   if (overtake_flag == 4.0)
+    //   {
+    //     RCLCPP_INFO(node_->get_logger(), "ACC mode, 유효 장애물 X");
+    //   }
+    //   else if (overtake_flag == 0.0)
+    //   {
+    //     RCLCPP_INFO(node_->get_logger(), "global path 추종, 유효 장애물 X");
+    //   }
+    //   else if (overtake_flag == 1.0)
+    //   {
+    //     RCLCPP_INFO(node_->get_logger(), "Static 회피 모드, 유효 장애물 X");
+    //   }
+    //   else if (overtake_flag == 2.0)
+    //   {
+    //     RCLCPP_INFO(node_->get_logger(), "Dynamic 추월 모드, 유효 장애물 X");
+    //   }
+    //   else
+    //   {
+    //     std::string log = std::string("unknown overtake_flag!!! ") + py_str_double(overtake_flag) + " (유효 장애물 X)";
+    //     RCLCPP_WARN(node_->get_logger(), "%s", log.c_str());
+    //   }
+    // }
+    // else if (overtake_flag == 4.0)
+    if (overtake_flag == 4.0)
     {
       pub_path_->publish(*lp);
       RCLCPP_INFO(node_->get_logger(), "ACC mode, 유효 장애물 X");

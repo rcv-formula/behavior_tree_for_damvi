@@ -199,7 +199,6 @@ public:
   BT::NodeStatus tick() override;
 
 private:
-  int additional_slowdown{0};  // 장애물 회피 후 일정시간동안 더 속도 늦춘 상태를 유지하기
   nav_msgs::msg::Path path_scaler(const nav_msgs::msg::Path& path_msg, double divide);
 
   rclcpp::Node::SharedPtr node_;
