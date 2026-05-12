@@ -3,6 +3,25 @@
 namespace behavior_tree_cpp_pkg
 {
 
+namespace
+{
+
+rclcpp::QoS reliable_qos(size_t depth)
+{
+  rclcpp::QoS qos(depth);
+  qos.reliable();
+  return qos;
+}
+
+rclcpp::QoS transient_reliable_qos(size_t depth)
+{
+  rclcpp::QoS qos(depth);
+  qos.reliable().transient_local();
+  return qos;
+}
+
+}  // namespace
+
 double yaw_from_quat(const geometry_msgs::msg::Quaternion& q)
 {
   return std::atan2(
@@ -144,17 +163,19 @@ CheckObstacleNode::CheckObstacleNode(const std::string& name, const BT::NodeConf
 
   publish_flag_ = node_->create_publisher<geometry_msgs::msg::PointStamped>("/obj_flag", 1);
 
-  rclcpp::QoS path_qos(1);
-  path_qos.reliable();
-
-  sub_global_path_ = node_->create_subscription<nav_msgs::msg::Path>(
-    "/global_path", path_qos,
+  auto global_path_cb =
     [this](nav_msgs::msg::Path::SharedPtr msg)
     {
       std::lock_guard<std::mutex> lk(shared_->mtx);
       shared_->global_path = msg;
       global_path_msg_ = msg;
-    });
+    };
+
+  sub_global_path_ = node_->create_subscription<nav_msgs::msg::Path>(
+    "/global_path", reliable_qos(1), global_path_cb);
+
+  sub_global_path_transient_ = node_->create_subscription<nav_msgs::msg::Path>(
+    "/global_path", transient_reliable_qos(1), global_path_cb);
 
   sub_ego_ = node_->create_subscription<nav_msgs::msg::Odometry>(
     "odom", 10,
@@ -427,17 +448,19 @@ SelectPathNode::SelectPathNode(const std::string& name, const BT::NodeConfigurat
 
   // Python: create_subscription(Path, 'Path', self.cb_localpath, 1)
   // User: /Path 가 토픽 이름
-  rclcpp::QoS qos(1);
-  qos.reliable(); // local_path가 qos가 이제는 transient local이 아니라 그냥 reliable로갓네요.
-
-  sub_local_ = node_->create_subscription<nav_msgs::msg::Path>(
-    "/Path", qos,
+  auto local_path_cb =
     [this](nav_msgs::msg::Path::SharedPtr msg)
     {
       std::lock_guard<std::mutex> lk(shared_->mtx);
       shared_->local_path = msg;
       shared_->local_stamp = {msg->header.stamp.sec, msg->header.stamp.nanosec};
-    });
+    };
+
+  sub_local_ = node_->create_subscription<nav_msgs::msg::Path>(
+    "/Path", reliable_qos(1), local_path_cb);
+
+  sub_local_transient_ = node_->create_subscription<nav_msgs::msg::Path>(
+    "/Path", transient_reliable_qos(1), local_path_cb);
 }
 
 nav_msgs::msg::Path SelectPathNode::path_scaler(const nav_msgs::msg::Path& path_msg, double divide)

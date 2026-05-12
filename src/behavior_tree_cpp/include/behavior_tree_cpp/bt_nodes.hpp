@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <cstdio>
 #include <mutex>
 #include <optional>
 #include <limits>
@@ -170,6 +171,7 @@ private:
   rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr publish_flag_;
 
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr sub_global_path_;
+  rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr sub_global_path_transient_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_ego_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_dyn_;
   rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr sub_static_;
@@ -206,6 +208,7 @@ private:
 
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub_path_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr sub_local_;
+  rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr sub_local_transient_;
 
   std::pair<int32_t, uint32_t> local_last_stamp_{0, 0};
   std::optional<nav_msgs::msg::Path> emergency_scaled_path_;

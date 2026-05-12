@@ -5,6 +5,9 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -28,6 +31,7 @@ target_include_directories(bt_nodes PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
+target_compile_features(bt_nodes PUBLIC cxx_std_17)
 ament_target_dependencies(bt_nodes
   rclcpp
   std_msgs
@@ -39,6 +43,7 @@ ament_target_dependencies(bt_nodes
 # bt_main 실행 파일
 add_executable(bt_main src/bt_main.cpp) # add executable은 실행파일 만들라는 명령어(ros2 run ... 그놈)
 target_link_libraries(bt_main bt_nodes) # bt_main 실행파일이 bt_nodes 라이브러리를 붙여서(link) 사용하게 함. 즉 bt_main에서 bt_nodes 안의 함수/클래스를 쓸 수 있음.
+target_compile_features(bt_main PUBLIC cxx_std_17)
 ament_target_dependencies(bt_main
   rclcpp
   behaviortree_cpp_v3
@@ -46,6 +51,7 @@ ament_target_dependencies(bt_main
 
 # health monitor 실행 파일
 add_executable(health_monitor src/health_monitor.cpp)
+target_compile_features(health_monitor PUBLIC cxx_std_17)
 ament_target_dependencies(health_monitor
   rclcpp
   std_msgs
@@ -54,6 +60,7 @@ ament_target_dependencies(health_monitor
 
 # tester code 실행 파일 만들기
 add_executable(behavior_tree_tester src/behavior_tree_tester.cpp)
+target_compile_features(behavior_tree_tester PUBLIC cxx_std_17)
 ament_target_dependencies(behavior_tree_tester
   rclcpp
   std_msgs
@@ -67,7 +74,7 @@ add_executable(behavior_tree src/behavior_tree.cpp)
 target_include_directories(behavior_tree PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
-target_compile_features(behavior_tree PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
+target_compile_features(behavior_tree PUBLIC cxx_std_17)  # Require C++17
 ament_target_dependencies(behavior_tree
   rclcpp
 )
@@ -79,7 +86,9 @@ install(TARGETS
   health_monitor
   behavior_tree_tester
   behavior_tree
-  DESTINATION lib/${PROJECT_NAME}
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION lib/${PROJECT_NAME}
 ) # install(TARGETS ...)는 colcon build는 "빌드"만 하고, ros2 run은 install 공간에 있는 실행파일을 찾아 실행합니다.
   # 따라서 install 폴더 안에 넣어주는 역할임!
 

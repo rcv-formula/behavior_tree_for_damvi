@@ -2,6 +2,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -23,7 +24,7 @@ def generate_launch_description():
         arguments=['--ros-args', '--log-level', 'INFO'],
         parameters=[{
             # 테스트가 아니라 실차면 보통 false
-            'bypass_critical': bypass_critical,
+            'bypass_critical': ParameterValue(bypass_critical, value_type=bool),
         }],
     )
 

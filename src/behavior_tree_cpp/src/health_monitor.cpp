@@ -32,13 +32,15 @@ public:
     last_["lidar"] = n;
     last_["vesc"] = n;
 
-    create_subscription<sensor_msgs::msg::Imu>(
-      imu_topic_, 10, [this](sensor_msgs::msg::Imu::SharedPtr){ mark("imu"); });
+    sub_imu_ = create_subscription<sensor_msgs::msg::Imu>(
+      imu_topic_, rclcpp::SensorDataQoS(),
+      [this](sensor_msgs::msg::Imu::SharedPtr){ mark("imu"); });
 
-    create_subscription<sensor_msgs::msg::LaserScan>(
-      lidar_topic_, 10, [this](sensor_msgs::msg::LaserScan::SharedPtr){ mark("lidar"); });
+    sub_lidar_ = create_subscription<sensor_msgs::msg::LaserScan>(
+      lidar_topic_, rclcpp::SensorDataQoS(),
+      [this](sensor_msgs::msg::LaserScan::SharedPtr){ mark("lidar"); });
 
-    create_subscription<std_msgs::msg::Float64>(
+    sub_vesc_ = create_subscription<std_msgs::msg::Float64>(
       vesc_topic_, 10, [this](std_msgs::msg::Float64::SharedPtr){ mark("vesc"); });
 
     pub_ok_ = create_publisher<std_msgs::msg::Bool>("/system/critical_ok", 1);
@@ -87,7 +89,7 @@ private:
       fail_since_.reset();
       std_msgs::msg::Bool b; b.data = true;
       std_msgs::msg::String s; s.data = "ok";
-      pub_ok_->publish(b); // 수정 필요
+      pub_ok_->publish(b);
       pub_rs_->publish(s);
       RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000, "In this tick, sensors are ok. Now go to next tick");
       return;
@@ -99,7 +101,7 @@ private:
     std_msgs::msg::Bool b; b.data = !hard_fail;
     std_msgs::msg::String s; s.data = hard_fail ? reason_ : "debouncing";
     b.data = true;
-    pub_ok_->publish(b); // 수정 필요
+    pub_ok_->publish(b);
     pub_rs_->publish(s);
 
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000, "In this tick, sensors are down. Now go to next tick");
@@ -118,6 +120,9 @@ private:
 
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pub_ok_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub_rs_;
+  rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
+  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr sub_lidar_;
+  rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr sub_vesc_;
   rclcpp::TimerBase::SharedPtr timer_;
 };
 
