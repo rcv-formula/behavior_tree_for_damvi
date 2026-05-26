@@ -55,6 +55,13 @@ ament_target_dependencies(health_monitor
   sensor_msgs
 )
 
+# RF restart trigger 테스트 실행 파일
+add_executable(rf_restart_trigger src/rf_restart_trigger.cpp)
+ament_target_dependencies(rf_restart_trigger
+  rclcpp
+  std_msgs
+)
+
 # tester code 실행 파일 만들기
 add_executable(behavior_tree_tester src/behavior_tree_tester.cpp)
 ament_target_dependencies(behavior_tree_tester
@@ -80,6 +87,7 @@ install(TARGETS
   bt_nodes
   bt_main
   health_monitor
+  rf_restart_trigger
   behavior_tree_tester
   behavior_tree
   DESTINATION lib/${PROJECT_NAME}

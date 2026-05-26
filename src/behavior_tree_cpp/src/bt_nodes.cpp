@@ -59,6 +59,24 @@ void set_marker_color(visualization_msgs::msg::Marker& marker,
   marker.color.b = 0.15;
 }
 
+std::string shell_quote(const std::string& value)
+{
+  std::string out = "'";
+  for (const char ch : value)
+  {
+    if (ch == '\'')
+    {
+      out += "'\\''";
+    }
+    else
+    {
+      out += ch;
+    }
+  }
+  out += "'";
+  return out;
+}
+
 }  // namespace
 
 double yaw_from_quat(const geometry_msgs::msg::Quaternion& q)
@@ -185,6 +203,247 @@ BT::NodeStatus EmergencyStop::tick()
 {
   RCLCPP_INFO(node_->get_logger(), "Estop SUCCESS");
   return succeed_ ? BT::NodeStatus::SUCCESS : BT::NodeStatus::FAILURE;
+}
+
+// -----------------------
+// CartographerRestartNode
+// -----------------------
+CartographerRestartNode::CartographerRestartNode(const std::string& name,
+                                                 const BT::NodeConfiguration& config,
+                                                 const rclcpp::Node::SharedPtr& node)
+: BT::SyncActionNode(name, config), node_(node)
+{
+  enabled_ = node_->declare_parameter<bool>("cartographer_restart_enabled", false);
+  rf_topic_ = node_->declare_parameter<std::string>("cartographer_restart_rf_topic", "/rf");
+  rf_channel_ = node_->declare_parameter<int>("cartographer_restart_rf_channel", 9);
+  rf_min_ = node_->declare_parameter<int>("cartographer_restart_rf_min", 1501);
+  rf_max_ = node_->declare_parameter<int>("cartographer_restart_rf_max", 65535);
+  cooldown_sec_ = node_->declare_parameter<double>("cartographer_restart_cooldown_sec", 10.0);
+  restart_config_.stop_delay_sec =
+    node_->declare_parameter<double>("cartographer_restart_stop_delay_sec", 2.0);
+  restart_config_.stop_command = node_->declare_parameter<std::string>(
+    "cartographer_stop_command",
+    "pkill -SIGINT -f 'ros2 launch cartographer_ros Damvi_carto_pure_wheel_launch.py' || true");
+  restart_config_.launch_command = node_->declare_parameter<std::string>(
+    "cartographer_launch_command",
+    "cd /home/symoon/Desktop/F1/Local_SLAM_Complete/good/SLAM_main-local_loss_wheel && "
+    "source install/setup.bash && "
+    "ros2 launch cartographer_ros Damvi_carto_pure_wheel_launch.py");
+  restart_config_.launch_log_path =
+    node_->declare_parameter<std::string>("cartographer_launch_log_path",
+                                          "/tmp/cartographer_restart.log");
+
+  sub_rf_ = node_->create_subscription<std_msgs::msg::UInt16MultiArray>(
+    rf_topic_, 10,
+    [this](std_msgs::msg::UInt16MultiArray::SharedPtr msg)
+    {
+      on_rf_msg(msg);
+    });
+
+  RCLCPP_INFO(node_->get_logger(),
+              "CartographerRestart watching RF topic '%s' (enabled=%s, channel=%d, range=[%d,%d])",
+              rf_topic_.c_str(), enabled_ ? "true" : "false", rf_channel_, rf_min_, rf_max_);
+}
+
+CartographerRestartNode::~CartographerRestartNode()
+{
+  if (restart_thread_.joinable())
+  {
+    restart_thread_.join();
+  }
+}
+
+double CartographerRestartNode::now() const
+{
+  return node_->now().seconds();
+}
+
+void CartographerRestartNode::refresh_params()
+{
+  node_->get_parameter("cartographer_restart_enabled", enabled_);
+  node_->get_parameter("cartographer_restart_rf_channel", rf_channel_);
+  node_->get_parameter("cartographer_restart_rf_min", rf_min_);
+  node_->get_parameter("cartographer_restart_rf_max", rf_max_);
+  node_->get_parameter("cartographer_restart_cooldown_sec", cooldown_sec_);
+  node_->get_parameter("cartographer_restart_stop_delay_sec", restart_config_.stop_delay_sec);
+  node_->get_parameter("cartographer_stop_command", restart_config_.stop_command);
+  node_->get_parameter("cartographer_launch_command", restart_config_.launch_command);
+  node_->get_parameter("cartographer_launch_log_path", restart_config_.launch_log_path);
+
+  if (rf_min_ > rf_max_)
+  {
+    std::swap(rf_min_, rf_max_);
+  }
+  if (rf_min_ < 0) rf_min_ = 0;
+  if (rf_max_ < 0) rf_max_ = 0;
+  if (rf_min_ > 65535) rf_min_ = 65535;
+  if (rf_max_ > 65535) rf_max_ = 65535;
+}
+
+void CartographerRestartNode::on_rf_msg(const std_msgs::msg::UInt16MultiArray::SharedPtr msg)
+{
+  refresh_params();
+
+  if (!enabled_)
+  {
+    std::lock_guard<std::mutex> lk(mtx_);
+    trigger_latched_ = false;
+    return;
+  }
+
+  if (rf_channel_ < 0)
+  {
+    RCLCPP_WARN_THROTTLE(
+      node_->get_logger(), *node_->get_clock(), 3000,
+      "cartographer_restart_enabled is true, but cartographer_restart_rf_channel is not set.");
+    return;
+  }
+
+  const auto channel = static_cast<std::size_t>(rf_channel_);
+  if (channel >= msg->data.size())
+  {
+    RCLCPP_WARN_THROTTLE(
+      node_->get_logger(), *node_->get_clock(), 3000,
+      "RF restart channel %d is out of range. /rf has %zu channels.",
+      rf_channel_, msg->data.size());
+    return;
+  }
+
+  const std::uint16_t value = msg->data[channel];
+  const bool trigger_active = value >= static_cast<std::uint16_t>(rf_min_) &&
+                              value <= static_cast<std::uint16_t>(rf_max_);
+
+  bool should_request = false;
+  {
+    std::lock_guard<std::mutex> lk(mtx_);
+    if (trigger_active && !trigger_latched_)
+    {
+      trigger_latched_ = true;
+      should_request = true;
+    }
+    else if (!trigger_active)
+    {
+      trigger_latched_ = false;
+    }
+  }
+
+  if (should_request)
+  {
+    request_restart(value);
+  }
+}
+
+void CartographerRestartNode::request_restart(std::uint16_t rf_value)
+{
+  std::lock_guard<std::mutex> lk(mtx_);
+
+  if (restart_in_progress_.load())
+  {
+    RCLCPP_WARN_THROTTLE(
+      node_->get_logger(), *node_->get_clock(), 2000,
+      "Cartographer restart request ignored because a restart is already running.");
+    return;
+  }
+
+  const double now_t = now();
+  if (last_restart_t_ != 0.0 && (now_t - last_restart_t_) < cooldown_sec_)
+  {
+    RCLCPP_WARN_THROTTLE(
+      node_->get_logger(), *node_->get_clock(), 2000,
+      "Cartographer restart request ignored by cooldown: %.2fs remaining.",
+      cooldown_sec_ - (now_t - last_restart_t_));
+    return;
+  }
+
+  restart_requested_ = true;
+  requested_rf_value_ = rf_value;
+  last_restart_t_ = now_t;
+  RCLCPP_WARN(node_->get_logger(),
+              "Cartographer restart requested by RF channel %d value %u.",
+              rf_channel_, static_cast<unsigned>(rf_value));
+}
+
+BT::NodeStatus CartographerRestartNode::tick()
+{
+  refresh_params();
+
+  if (restart_thread_.joinable() && !restart_in_progress_.load())
+  {
+    restart_thread_.join();
+  }
+
+  bool start_restart = false;
+  std::uint16_t rf_value = 0;
+  RestartConfig config;
+  {
+    std::lock_guard<std::mutex> lk(mtx_);
+    if (restart_requested_ && !restart_in_progress_.load())
+    {
+      restart_requested_ = false;
+      restart_in_progress_.store(true);
+      rf_value = requested_rf_value_;
+      config = restart_config_;
+      start_restart = true;
+    }
+  }
+
+  if (start_restart)
+  {
+    restart_thread_ = std::thread(
+      [this, rf_value, config]()
+      {
+        restart_worker(rf_value, config);
+      });
+  }
+
+  return BT::NodeStatus::SUCCESS;
+}
+
+void CartographerRestartNode::restart_worker(std::uint16_t rf_value, RestartConfig config)
+{
+  RCLCPP_WARN(node_->get_logger(),
+              "Restarting cartographer launch now (RF value=%u).",
+              static_cast<unsigned>(rf_value));
+
+  if (!config.stop_command.empty())
+  {
+    const int stop_rc = std::system(config.stop_command.c_str());
+    RCLCPP_INFO(node_->get_logger(), "cartographer_stop_command finished with rc=%d.", stop_rc);
+  }
+
+  if (config.stop_delay_sec > 0.0)
+  {
+    std::this_thread::sleep_for(
+      std::chrono::milliseconds(static_cast<int>(config.stop_delay_sec * 1000.0)));
+  }
+
+  if (config.launch_command.empty())
+  {
+    RCLCPP_ERROR(node_->get_logger(),
+                 "cartographer_launch_command is empty. Cartographer was stopped but not relaunched.");
+    restart_in_progress_.store(false);
+    return;
+  }
+
+  const std::string launch_inner =
+    "(" + config.launch_command + ") >> " + shell_quote(config.launch_log_path) + " 2>&1 &";
+  const std::string launch_shell = "bash -lc " + shell_quote(launch_inner);
+  const int launch_rc = std::system(launch_shell.c_str());
+
+  if (launch_rc == 0)
+  {
+    RCLCPP_WARN(node_->get_logger(),
+                "cartographer launch restarted. Log: %s",
+                config.launch_log_path.c_str());
+  }
+  else
+  {
+    RCLCPP_ERROR(node_->get_logger(),
+                 "cartographer_launch_command failed to start, rc=%d. Log: %s",
+                 launch_rc, config.launch_log_path.c_str());
+  }
+
+  restart_in_progress_.store(false);
 }
 
 // -----------------------

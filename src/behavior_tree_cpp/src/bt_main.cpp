@@ -9,6 +9,7 @@
 using behavior_tree_cpp_pkg::SharedData;
 using behavior_tree_cpp_pkg::CondCriticalOK;
 using behavior_tree_cpp_pkg::EmergencyStop;
+using behavior_tree_cpp_pkg::CartographerRestartNode;
 using behavior_tree_cpp_pkg::CheckObstacleNode;
 using behavior_tree_cpp_pkg::SelectPathNode;
 
@@ -32,6 +33,13 @@ int main(int argc, char** argv)
     [node](const std::string& name, const BT::NodeConfiguration& config)
     {
       return std::make_unique<EmergencyStop>(name, config, node);
+    });
+
+  factory.registerBuilder<CartographerRestartNode>(
+    "CartographerRestart",
+    [node](const std::string& name, const BT::NodeConfiguration& config)
+    {
+      return std::make_unique<CartographerRestartNode>(name, config, node);
     });
 
   factory.registerBuilder<CheckObstacleNode>(
@@ -59,6 +67,8 @@ int main(int argc, char** argv)
   <root main_tree_to_execute="MainTree">
     <BehaviorTree ID="MainTree">
       <Sequence name="Root">
+        <CartographerRestart name="CartographerRestart"/>
+
         <Fallback name="CriticalGuard">
           <CondCriticalOK name="CondCriticalOK"/>
           <EmergencyStop name="E-Stop[Guard]"/>

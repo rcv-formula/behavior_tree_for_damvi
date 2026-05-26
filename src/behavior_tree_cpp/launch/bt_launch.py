@@ -3,12 +3,36 @@ from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+import os
 
 
 def generate_launch_description():
+    local_cartographer_ws = '/home/symoon/Desktop/F1/Local_SLAM_Complete/good/SLAM_main-local_loss_wheel'
+    vehicle_cartographer_ws = '/home/rcv/SLAM_main'
+    cartographer_launch_file = 'Damvi_carto_pure_wheel_launch.py'
+    default_cartographer_ws = (
+        local_cartographer_ws
+        if os.path.exists(os.path.join(local_cartographer_ws, 'install', 'setup.bash'))
+        else vehicle_cartographer_ws
+    )
+    default_cartographer_launch = (
+        f'cd {default_cartographer_ws} && source install/setup.bash && '
+        f'ros2 launch cartographer_ros {cartographer_launch_file}'
+    )
+
     bypass_critical = LaunchConfiguration('bypass_critical')
     obstacle_mode = LaunchConfiguration('obstacle_mode')
     dynamic_min_speed_mps = LaunchConfiguration('dynamic_min_speed_mps')
+    cartographer_restart_enabled = LaunchConfiguration('cartographer_restart_enabled')
+    cartographer_restart_rf_topic = LaunchConfiguration('cartographer_restart_rf_topic')
+    cartographer_restart_rf_channel = LaunchConfiguration('cartographer_restart_rf_channel')
+    cartographer_restart_rf_min = LaunchConfiguration('cartographer_restart_rf_min')
+    cartographer_restart_rf_max = LaunchConfiguration('cartographer_restart_rf_max')
+    cartographer_restart_cooldown_sec = LaunchConfiguration('cartographer_restart_cooldown_sec')
+    cartographer_restart_stop_delay_sec = LaunchConfiguration('cartographer_restart_stop_delay_sec')
+    cartographer_stop_command = LaunchConfiguration('cartographer_stop_command')
+    cartographer_launch_command = LaunchConfiguration('cartographer_launch_command')
+    cartographer_launch_log_path = LaunchConfiguration('cartographer_launch_log_path')
 
     health_monitor_node = Node(
         package='behavior_tree_cpp',
@@ -31,6 +55,17 @@ def generate_launch_description():
             'obstacle_mode': ParameterValue(obstacle_mode, value_type=int),
             # Only mode 3 uses this to avoid treating nearly-static objects as dynamic.
             'dynamic_min_speed_mps': ParameterValue(dynamic_min_speed_mps, value_type=float),
+            # RF-triggered cartographer restart. /rf is std_msgs/UInt16MultiArray.
+            'cartographer_restart_enabled': ParameterValue(cartographer_restart_enabled, value_type=bool),
+            'cartographer_restart_rf_topic': cartographer_restart_rf_topic,
+            'cartographer_restart_rf_channel': ParameterValue(cartographer_restart_rf_channel, value_type=int),
+            'cartographer_restart_rf_min': ParameterValue(cartographer_restart_rf_min, value_type=int),
+            'cartographer_restart_rf_max': ParameterValue(cartographer_restart_rf_max, value_type=int),
+            'cartographer_restart_cooldown_sec': ParameterValue(cartographer_restart_cooldown_sec, value_type=float),
+            'cartographer_restart_stop_delay_sec': ParameterValue(cartographer_restart_stop_delay_sec, value_type=float),
+            'cartographer_stop_command': cartographer_stop_command,
+            'cartographer_launch_command': cartographer_launch_command,
+            'cartographer_launch_log_path': cartographer_launch_log_path,
         }],
     )
 
@@ -49,6 +84,56 @@ def generate_launch_description():
             'dynamic_min_speed_mps',
             default_value='0.0',
             description='Mode 3 only: minimum /dynamic_obstacle speed required for dynamic judgment'
+        ),
+        DeclareLaunchArgument(
+            'cartographer_restart_enabled',
+            default_value='false',
+            description='Enable RF-triggered cartographer launch restart'
+        ),
+        DeclareLaunchArgument(
+            'cartographer_restart_rf_topic',
+            default_value='/rf',
+            description='RF topic to watch. Expected type: std_msgs/UInt16MultiArray'
+        ),
+        DeclareLaunchArgument(
+            'cartographer_restart_rf_channel',
+            default_value='9',
+            description='Zero-based /rf channel index that triggers cartographer restart'
+        ),
+        DeclareLaunchArgument(
+            'cartographer_restart_rf_min',
+            default_value='1501',
+            description='Minimum RF channel value for restart trigger. Values <=1500 are treated as off.'
+        ),
+        DeclareLaunchArgument(
+            'cartographer_restart_rf_max',
+            default_value='65535',
+            description='Maximum RF channel value for restart trigger'
+        ),
+        DeclareLaunchArgument(
+            'cartographer_restart_cooldown_sec',
+            default_value='10.0',
+            description='Minimum seconds between cartographer restart requests'
+        ),
+        DeclareLaunchArgument(
+            'cartographer_restart_stop_delay_sec',
+            default_value='2.0',
+            description='Delay after stopping cartographer before relaunching'
+        ),
+        DeclareLaunchArgument(
+            'cartographer_stop_command',
+            default_value=f"pkill -SIGINT -f 'ros2 launch cartographer_ros {cartographer_launch_file}' || true",
+            description='Shell command used to stop the existing cartographer launch'
+        ),
+        DeclareLaunchArgument(
+            'cartographer_launch_command',
+            default_value=default_cartographer_launch,
+            description='Shell command used to start cartographer launch'
+        ),
+        DeclareLaunchArgument(
+            'cartographer_launch_log_path',
+            default_value='/tmp/cartographer_restart.log',
+            description='Log file for the relaunched cartographer process'
         ),
         health_monitor_node,
         bt_main_node,

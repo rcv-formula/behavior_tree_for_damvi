@@ -1,11 +1,16 @@
 #pragma once
 
 #include <cmath>
+#include <atomic>
+#include <cstdint>
+#include <cstdlib>
+#include <chrono>
 #include <mutex>
 #include <optional>
 #include <limits>
 #include <memory>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include "rclcpp/rclcpp.hpp"
@@ -13,6 +18,7 @@
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/int32.hpp"
 #include "std_msgs/msg/string.hpp"
+#include "std_msgs/msg/u_int16_multi_array.hpp"
 
 #include "nav_msgs/msg/odometry.hpp"
 #include "nav_msgs/msg/path.hpp"
@@ -134,6 +140,57 @@ public:
 private:
   rclcpp::Node::SharedPtr node_;
   bool succeed_{false};
+};
+
+// -----------------------
+// CartographerRestart
+// - Watches mapped RF channel values and restarts cartographer launch once per switch edge.
+// -----------------------
+class CartographerRestartNode : public BT::SyncActionNode
+{
+public:
+  CartographerRestartNode(const std::string& name, const BT::NodeConfiguration& config,
+                          const rclcpp::Node::SharedPtr& node);
+  ~CartographerRestartNode() override;
+
+  static BT::PortsList providedPorts() { return {}; }
+
+  BT::NodeStatus tick() override;
+
+private:
+  struct RestartConfig
+  {
+    double stop_delay_sec{2.0};
+    std::string stop_command;
+    std::string launch_command;
+    std::string launch_log_path;
+  };
+
+  double now() const;
+  void refresh_params();
+  void on_rf_msg(const std_msgs::msg::UInt16MultiArray::SharedPtr msg);
+  void request_restart(std::uint16_t rf_value);
+  void restart_worker(std::uint16_t rf_value, RestartConfig config);
+
+  rclcpp::Node::SharedPtr node_;
+  rclcpp::Subscription<std_msgs::msg::UInt16MultiArray>::SharedPtr sub_rf_;
+
+  std::mutex mtx_;
+  bool restart_requested_{false};
+  bool trigger_latched_{false};
+  double last_restart_t_{0.0};
+  std::uint16_t requested_rf_value_{0};
+
+  std::atomic_bool restart_in_progress_{false};
+  std::thread restart_thread_;
+
+  bool enabled_{false};
+  std::string rf_topic_{"/rf"};
+  int rf_channel_{9};
+  int rf_min_{1501};
+  int rf_max_{65535};
+  double cooldown_sec_{10.0};
+  RestartConfig restart_config_;
 };
 
 // -----------------------
