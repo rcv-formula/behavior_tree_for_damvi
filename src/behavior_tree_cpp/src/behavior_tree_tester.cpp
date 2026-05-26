@@ -26,7 +26,7 @@ struct Scenario
   double ego_x, ego_y;
   double dyn_x, dyn_y;
   double st_x,  st_y;
-  double flag;     // overtake_flag (0,1,2,4)
+  double flag;     // mode flag (0=BASE, 1=AVOID, 2=ACC)
   double base_z;   // Path pose.position.z as base speed
 };
 
@@ -73,8 +73,8 @@ public:
       {"15:[flag=2] Dynamic obstacle ~2m",   0.0,0.0, 2.0,  0.0, 100.0,0.0, 2.0, 2.0},
       {"19:[flag=2] Dynamic obstacle ~0.3m", 0.0,0.0, 0.3,  0.0, 100.0,0.0, 2.0, 2.0},
 
-      // 너 SelectPath 코드에서 ACC 모드는 flag==4 를 봄 (파이썬 주석은 3이라 써놨지만 실제 C++은 4)
-      {"23:[flag=4] Dynamic obstacle ~2m",   0.0,0.0, 2.0,  0.0, 100.0,0.0, 4.0, 2.0},
+      // local planner mode: 0=BASE, 1=AVOID, 2=ACC
+      {"23:[flag=2] ACC obstacle ~2m",       0.0,0.0, 2.0,  0.0, 100.0,0.0, 2.0, 2.0},
     };
 
     // 파라미터: ros2 param set /state_machine_tester scenario_idx N

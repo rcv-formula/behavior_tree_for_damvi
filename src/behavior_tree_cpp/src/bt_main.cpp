@@ -65,8 +65,17 @@ int main(int argc, char** argv)
         </Fallback>
 
         <Fallback name="Main">
-          <CheckObstacle name="CheckObstacle"/>
-          <SelectPath name="SelectPath"/>
+          <CheckObstacle name="CheckObstacle"
+                         dynamic_obstacle="{dynamic_obstacle}"
+                         static_obstacle="{static_obstacle}"
+                         dynamic_distance="{dynamic_distance}"
+                         static_distance="{static_distance}"
+                         prioritize_dynamic_flag="{prioritize_dynamic_flag}"
+                         obstacle_mode="{obstacle_mode}"/>
+          <SelectPath name="SelectPath"
+                      dynamic_distance="{dynamic_distance}"
+                      static_distance="{static_distance}"
+                      overtake_flag="{overtake_flag}"/>
         </Fallback>
       </Sequence>
     </BehaviorTree>

@@ -3,6 +3,64 @@
 namespace behavior_tree_cpp_pkg
 {
 
+namespace
+{
+
+const char* bt_decision_name(bool ready, bool dyn_flag, bool st_flag)
+{
+  if (!ready) return "WAITING";
+  if (dyn_flag && st_flag) return "DYNAMIC + STATIC";
+  if (dyn_flag) return "DYNAMIC";
+  if (st_flag) return "STATIC";
+  return "NO OBSTACLE";
+}
+
+void set_marker_color(visualization_msgs::msg::Marker& marker,
+                      bool ready,
+                      bool dyn_flag,
+                      bool st_flag)
+{
+  marker.color.a = 1.0;
+
+  if (!ready)
+  {
+    marker.color.r = 0.8;
+    marker.color.g = 0.8;
+    marker.color.b = 0.8;
+    return;
+  }
+
+  if (dyn_flag && st_flag)
+  {
+    marker.color.r = 1.0;
+    marker.color.g = 0.0;
+    marker.color.b = 1.0;
+    return;
+  }
+
+  if (dyn_flag)
+  {
+    marker.color.r = 1.0;
+    marker.color.g = 0.8;
+    marker.color.b = 0.0;
+    return;
+  }
+
+  if (st_flag)
+  {
+    marker.color.r = 1.0;
+    marker.color.g = 0.1;
+    marker.color.b = 0.1;
+    return;
+  }
+
+  marker.color.r = 0.05;
+  marker.color.g = 0.9;
+  marker.color.b = 0.15;
+}
+
+}  // namespace
+
 double yaw_from_quat(const geometry_msgs::msg::Quaternion& q)
 {
   return std::atan2(
@@ -137,15 +195,22 @@ CheckObstacleNode::CheckObstacleNode(const std::string& name, const BT::NodeConf
                                      const std::shared_ptr<SharedData>& shared)
 : BT::SyncActionNode(name, config), node_(node), shared_(shared)
 {
-  thresh_m_ = node_->declare_parameter<double>("thresh_m", 15.0);
-  estop_thresh_m_ = node_->declare_parameter<double>("estop_thresh_m", 0.5);
-  fresh_ = node_->declare_parameter<double>("fresh", 0.3);
-  half_angle_deg_ = node_->declare_parameter<double>("half_angle_deg", 100.0);
+	  thresh_m_ = node_->declare_parameter<double>("thresh_m", 15.0);
+	  static_thresh_m_ = node_->declare_parameter<double>("static_thresh_m", 10.0);
+	  estop_thresh_m_ = node_->declare_parameter<double>("estop_thresh_m", 0.5);
+	  fresh_ = node_->declare_parameter<double>("fresh", 0.15);
+	  half_angle_deg_ = node_->declare_parameter<double>("half_angle_deg", 100.0);
+	  dynamic_min_speed_mps_ = node_->declare_parameter<double>("dynamic_min_speed_mps", 0.0);
+	  static_path_enter_m_ = node_->declare_parameter<double>("static_path_enter_m", 0.6);
+	  static_path_hold_m_ = node_->declare_parameter<double>("static_path_hold_m", 1.0);
+	  dynamic_static_overlap_m_ = node_->declare_parameter<double>("dynamic_static_overlap_m", 1.0);
+	  node_->declare_parameter<int>("obstacle_mode", 0);
 
-  publish_flag_ = node_->create_publisher<geometry_msgs::msg::PointStamped>("/obj_flag", 1);
+	  publish_flag_ = node_->create_publisher<geometry_msgs::msg::PointStamped>("/obj_flag", 1);
+	  publish_mode_ = node_->create_publisher<std_msgs::msg::Int32>("/obstacle_mode", 1);
 
   rclcpp::QoS path_qos(1);
-  path_qos.reliable().transient_local();
+  path_qos.reliable();
 
   sub_global_path_ = node_->create_subscription<nav_msgs::msg::Path>(
     "/global_path", path_qos,
@@ -214,7 +279,7 @@ BT::NodeStatus CheckObstacleNode::tick()
   double ego_t, ego_x, ego_y, ego_yaw;
 
   bool dyn_ok;
-  double dyn_t, dyn_x, dyn_y;
+  double dyn_t, dyn_x, dyn_y, dyn_vx, dyn_vy;
 
   bool st_ok;
   double st_t, st_x, st_y;
@@ -233,6 +298,8 @@ BT::NodeStatus CheckObstacleNode::tick()
     dyn_t  = shared_->dyn_t;
     dyn_x  = shared_->dyn_x;
     dyn_y  = shared_->dyn_y;
+    dyn_vx = shared_->dyn_vx;
+    dyn_vy = shared_->dyn_vy;
 
     st_ok = shared_->st_ok;
     st_t  = shared_->st_t;
@@ -245,6 +312,26 @@ BT::NodeStatus CheckObstacleNode::tick()
   global_path_msg_ = global_path;
 
   const double now_t = now();
+
+	  node_->get_parameter("thresh_m", thresh_m_);
+	  node_->get_parameter("static_thresh_m", static_thresh_m_);
+	  node_->get_parameter("fresh", fresh_);
+	  node_->get_parameter("half_angle_deg", half_angle_deg_);
+	  node_->get_parameter("dynamic_min_speed_mps", dynamic_min_speed_mps_);
+	  node_->get_parameter("static_path_enter_m", static_path_enter_m_);
+	  node_->get_parameter("static_path_hold_m", static_path_hold_m_);
+	  node_->get_parameter("dynamic_static_overlap_m", dynamic_static_overlap_m_);
+
+	  int selected_mode = 0;
+	  node_->get_parameter("obstacle_mode", selected_mode);
+	  if (selected_mode < 0 || selected_mode > 3)
+	  {
+	    RCLCPP_WARN_THROTTLE(
+	      node_->get_logger(), *node_->get_clock(), 2000,
+	      "Invalid obstacle_mode=%d. Use 0(auto), 1(no obstacle), 2(dynamic only), 3(dynamic+static). Falling back to auto.",
+	      selected_mode);
+	    selected_mode = 0;
+	  }
 
   if (!ego_ok || ego_t == 0.0 || (now_t - ego_t) > fresh_)
   {
@@ -260,10 +347,16 @@ BT::NodeStatus CheckObstacleNode::tick()
   // ------------------------
   // Dynamic obstacle 판정
   // ------------------------
-  const bool dyn_stale = (!dyn_ok || dyn_t == 0.0 || (now_t - dyn_t) > fresh_);
-  if (dyn_stale)
+  const bool dyn_never = (!dyn_ok || dyn_t == 0.0);
+  const bool dyn_stale = (dyn_ok && dyn_t != 0.0 && (now_t - dyn_t) > fresh_);
+  if (dyn_never)
   {
-    RCLCPP_WARN(node_->get_logger(), "/dynamic_obstacle can't subscribable. CheckObstacle Failure.");
+    RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 3000, "No dynamic_obstacle detected yet.");
+    dyn_flag = false;
+    dynamic_dist = 100.0;
+  }
+  else if (dyn_stale){
+    RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000, "/dynamic_obstacle stale: age=%.3fs (fresh = %.3fs).", (now_t-dyn_t),fresh_);
     dyn_flag = false;
     dynamic_dist = 100.0;
   }
@@ -280,14 +373,17 @@ BT::NodeStatus CheckObstacleNode::tick()
 
     const bool in_front = is_in_front_180(dx, dy, ego_yaw, half_angle_deg_);
     const bool close_enough = (dynamic_dist <= thresh_m_);
+    const double dynamic_speed = std::hypot(dyn_vx, dyn_vy);
+    const bool use_mode3_speed_gate = (selected_mode == 3 && dynamic_min_speed_mps_ > 0.0);
+    const bool moving_enough = (!use_mode3_speed_gate || dynamic_speed >= dynamic_min_speed_mps_);
 
-    if (in_front && close_enough)
+    if (in_front && close_enough && moving_enough)
     {
       dyn_flag = true;
       char buf[256];
       std::snprintf(buf, sizeof(buf),
-                    "Dynamic VALID: dist=%.2fm, front180=%s",
-                    dynamic_dist, in_front ? "True" : "False");
+                    "Dynamic VALID: dist=%.2fm, front180=%s, speed=%.2fm/s",
+                    dynamic_dist, in_front ? "True" : "False", dynamic_speed);
       RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 500, "%s", buf);
     }
     else
@@ -301,19 +397,31 @@ BT::NodeStatus CheckObstacleNode::tick()
         std::string log = std::string("Dynamic farther than ") + py_str_double(thresh_m_) + "m.";
         RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000, "%s", log.c_str());
       }
+      else if (!moving_enough)
+      {
+        RCLCPP_INFO_THROTTLE(
+          node_->get_logger(), *node_->get_clock(), 2000,
+          "Mode 3 dynamic suppressed by speed gate: speed=%.2fm/s < %.2fm/s.",
+          dynamic_speed, dynamic_min_speed_mps_);
+      }
     }
   }
 
   // ------------------------
   // Static obstacle 판정
   // ------------------------
-  const bool st_stale = (!st_ok || st_t == 0.0 || (now_t - st_t) > fresh_);
-  if (st_stale)
-  {
-    RCLCPP_WARN(node_->get_logger(), "/static_obstacle can't subscribable. CheckObstacle Failure.");
+  const bool st_never = (!st_ok || st_t == 0.0);
+  const bool st_stale = (st_ok && st_t != 0.0 && (now_t - st_t) > fresh_);
+  if (st_never){
+    RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 3000, "No /static_obstacle detected yet.");
     st_flag = false;
     static_dist = 100.0;
-    st_flag_memory_ = false;
+  }
+  else if (st_stale)
+  {
+    RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000, "/static_obstacle stale: age=%.3fs (fresh=%.3fs).", (now_t-st_t), fresh_);
+    st_flag = false;
+    static_dist = 100.0;
   }
   else
   {
@@ -327,7 +435,7 @@ BT::NodeStatus CheckObstacleNode::tick()
     }
 
     const bool in_front = is_in_front_180(sx, sy, ego_yaw, half_angle_deg_);
-    const bool close_enough = (static_dist <= thresh_m_);
+	    const bool close_enough = (static_dist <= static_thresh_m_);
 
     auto path_d_opt = point_to_path_min_dist(st_x, st_y, global_path_msg_);
     double path_d = path_d_opt ? *path_d_opt : -1.0;
@@ -335,8 +443,8 @@ BT::NodeStatus CheckObstacleNode::tick()
     bool close_to_path = false;
     if (path_d_opt)
     {
-      if (!st_flag_memory_ && path_d <= 0.5) close_to_path = true;
-      else if (st_flag_memory_ && path_d <= 1.0) close_to_path = true;
+	      if (!st_flag_memory_ && path_d <= static_path_enter_m_) close_to_path = true;
+	      else if (st_flag_memory_ && path_d <= static_path_hold_m_) close_to_path = true;
       else close_to_path = false;
     }
     else
@@ -361,7 +469,7 @@ BT::NodeStatus CheckObstacleNode::tick()
       }
       else if (!close_enough)
       {
-        std::string log = std::string("Static farther than ") + py_str_double(thresh_m_) + "m.";
+	        std::string log = std::string("Static farther than ") + py_str_double(static_thresh_m_) + "m.";
         RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000, "%s", log.c_str());
       }
       else if (!close_to_path)
@@ -373,33 +481,87 @@ BT::NodeStatus CheckObstacleNode::tick()
         else
         {
           char buf[256];
-          std::snprintf(buf, sizeof(buf),
-                        "Static in front but not blocking path (dist to path=%.2fm >0.8m)",
-                        path_d);
-          RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000, "%s", buf);
-        }
-      }
+	          const double active_static_path_limit =
+	            st_flag_memory_ ? static_path_hold_m_ : static_path_enter_m_;
+	          std::snprintf(buf, sizeof(buf),
+	                        "Static in front but not blocking path (dist to path=%.2fm >%.2fm)",
+	                        path_d, active_static_path_limit);
+	          RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 2000, "%s", buf);
+	        }
+	      }
     }
 
     st_flag_memory_ = st_flag;
   }
 
-  // Python: prioritize_dynamic_flag 결국 False로 publish
-  bool prioritize_dynamic_flag = false;
+	  const bool suppress_static_overlap = (selected_mode == 0 || selected_mode == 2);
+	  if (suppress_static_overlap && dyn_flag && st_flag)
+	  {
+	    const double overlap_dist = std::hypot(dyn_x - st_x, dyn_y - st_y);
+	    if (overlap_dist <= dynamic_static_overlap_m_)
+	    {
+	      st_flag = false;
+	      static_dist = 100.0;
+	      st_flag_memory_ = false;
+	      RCLCPP_INFO_THROTTLE(
+	        node_->get_logger(), *node_->get_clock(), 500,
+	        "Static suppressed because it overlaps dynamic obstacle: overlap=%.2fm <= %.2fm",
+	        overlap_dist, dynamic_static_overlap_m_);
+	    }
+	  }
 
-  setOutput("dynamic_obstacle", dyn_flag);
-  setOutput("static_obstacle", st_flag);
-  setOutput("dynamic_distance", dynamic_dist);
-  setOutput("static_distance", static_dist);
-  setOutput("prioritize_dynamic_flag", prioritize_dynamic_flag);
+	  if (selected_mode == 1)
+	  {
+	    dyn_flag = false;
+	    st_flag = false;
+	    dynamic_dist = 100.0;
+	    static_dist = 100.0;
+	    st_flag_memory_ = false;
+	  }
+	  else if (selected_mode == 2)
+	  {
+	    st_flag = false;
+	    static_dist = 100.0;
+	    st_flag_memory_ = false;
+	  }
+
+	  // obstacle_mode parameter:
+	  // 0=auto, 1=no obstacle, 2=dynamic only, 3=dynamic+static.
+	  // In auto mode, publish the mode inferred from the final flags.
+	  int detected_mode = 1;
+	  if (dyn_flag && !st_flag) detected_mode = 2;
+	  else if (st_flag) detected_mode = 3;
+	  const int obstacle_mode = (selected_mode == 0) ? detected_mode : selected_mode;
+
+	  bool prioritize_dynamic_flag = false;
+
+	  setOutput("dynamic_obstacle", dyn_flag);
+	  setOutput("static_obstacle", st_flag);
+	  setOutput("dynamic_distance", dynamic_dist);
+	  setOutput("static_distance", static_dist);
+	  setOutput("prioritize_dynamic_flag", prioritize_dynamic_flag);
+	  setOutput("obstacle_mode", obstacle_mode);
+
+  {
+    std::lock_guard<std::mutex> lk(shared_->mtx);
+    shared_->obstacle_ready = true;
+    shared_->latest_dynamic_obstacle = dyn_flag;
+    shared_->latest_static_obstacle = st_flag;
+    shared_->latest_dynamic_distance = dynamic_dist;
+    shared_->latest_static_distance = static_dist;
+    shared_->latest_obstacle_mode = obstacle_mode;
+  }
 
   geometry_msgs::msg::PointStamped msg;
-  msg.header.stamp = node_->get_clock()->now();  // Humble ok (implicit conversion)
-  msg.point.x = dyn_flag ? 1.0 : 0.0;
-  msg.point.y = st_flag ? 1.0 : 0.0;
-  msg.point.z = prioritize_dynamic_flag ? 1.0 : 0.0;
-  publish_flag_->publish(msg);
-  RCLCPP_INFO(node_->get_logger(), "obj_flag published.");
+	  msg.header.stamp = node_->get_clock()->now();  // Humble ok (implicit conversion)
+	  msg.point.x = dyn_flag ? 1.0 : 0.0;
+	  msg.point.y = st_flag ? 1.0 : 0.0;
+	  msg.point.z = prioritize_dynamic_flag ? 1.0 : 0.0;
+	  publish_flag_->publish(msg);
+
+	  std_msgs::msg::Int32 mode_msg;
+	  mode_msg.data = obstacle_mode;
+	  publish_mode_->publish(mode_msg);
 
   // Python: 항상 FAILURE로 다음 노드(SelectPath)로 넘어가게 함
   return BT::NodeStatus::FAILURE;
@@ -414,6 +576,7 @@ SelectPathNode::SelectPathNode(const std::string& name, const BT::NodeConfigurat
 : BT::SyncActionNode(name, config), node_(node), shared_(shared)
 {
   pub_path_ = node_->create_publisher<nav_msgs::msg::Path>("/selected_path", 1);
+  pub_marker_ = node_->create_publisher<visualization_msgs::msg::Marker>("/bt_decision_marker", 1);
 
   // Python: create_subscription(Path, 'Path', self.cb_localpath, 1)
   // User: /Path 가 토픽 이름
@@ -440,6 +603,45 @@ nav_msgs::msg::Path SelectPathNode::path_scaler(const nav_msgs::msg::Path& path_
   return sp;
 }
 
+void SelectPathNode::publish_decision_marker(const std::string& frame_id)
+{
+  bool obstacle_ready = false;
+  bool dyn_flag = false;
+  bool st_flag = false;
+  bool ego_ok = false;
+  double ego_x = 0.0;
+  double ego_y = 0.0;
+
+  {
+    std::lock_guard<std::mutex> lk(shared_->mtx);
+    obstacle_ready = shared_->obstacle_ready;
+    dyn_flag = shared_->latest_dynamic_obstacle;
+    st_flag = shared_->latest_static_obstacle;
+    ego_ok = shared_->ego_ok;
+    ego_x = shared_->ego_x;
+    ego_y = shared_->ego_y;
+  }
+
+  visualization_msgs::msg::Marker marker;
+  marker.header.stamp = node_->get_clock()->now();
+  marker.header.frame_id = frame_id.empty() ? "map" : frame_id;
+  marker.ns = "behavior_tree";
+  marker.id = 0;
+  marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+  marker.action = visualization_msgs::msg::Marker::ADD;
+  marker.pose.position.x = ego_ok ? ego_x : 0.0;
+  marker.pose.position.y = ego_ok ? ego_y + 0.9 : 0.0;
+  marker.pose.position.z = 1.2;
+  marker.pose.orientation.w = 1.0;
+  marker.scale.z = 0.45;
+  marker.lifetime = rclcpp::Duration::from_seconds(0.5);
+
+  set_marker_color(marker, obstacle_ready, dyn_flag, st_flag);
+  marker.text = bt_decision_name(obstacle_ready, dyn_flag, st_flag);
+
+  pub_marker_->publish(marker);
+}
+
 BT::NodeStatus SelectPathNode::tick()
 {
   nav_msgs::msg::Path::SharedPtr lp;
@@ -452,11 +654,16 @@ BT::NodeStatus SelectPathNode::tick()
 
   if (!lp)
   {
+    publish_decision_marker("map");
     RCLCPP_WARN(node_->get_logger(), "/Path don't come yet.");
     return BT::NodeStatus::FAILURE;
   }
 
-  double overtake_flag = 0.0;
+  constexpr double MODE_BASE = 0.0;
+  constexpr double MODE_AVOID = 1.0;
+  constexpr double MODE_ACC = 2.0;
+
+  double overtake_flag = MODE_BASE;
   if (!lp->poses.empty())
   {
     overtake_flag = lp->poses[0].pose.orientation.z;
@@ -466,176 +673,90 @@ BT::NodeStatus SelectPathNode::tick()
   if (stamp != local_last_stamp_)
   {
     local_last_stamp_ = stamp;
-    // emergency_scaled_path_ = path_scaler(*lp, 10.0);
-    // acc_scaled_path_ = path_scaler(*lp, 2.0);
+    emergency_scaled_path_ = path_scaler(*lp, 10.0);
   }
 
   double dynamic_distance = 100.0;
   double static_distance  = 100.0;
+  {
+    std::lock_guard<std::mutex> lk(shared_->mtx);
+    dynamic_distance = shared_->latest_dynamic_distance;
+    static_distance = shared_->latest_static_distance;
+  }
   (void)getInput("dynamic_distance", dynamic_distance);
   (void)getInput("static_distance", static_distance);
 
-  // Emergency mode (추월X)
-  if ((dynamic_distance <= 1.0 || static_distance <= 1.0) && overtake_flag != 2.0)
+  const bool emergency = (dynamic_distance <= 1.0 || static_distance <= 1.0);
+  const bool obstacle_nearby = (dynamic_distance < 10.0 || static_distance < 10.0);
+  publish_decision_marker(lp->header.frame_id);
+
+  if (emergency)
   {
-    emergency_scaled_path_ = path_scaler(*lp, 10.0);
     if (emergency_scaled_path_)
     {
       pub_path_->publish(*emergency_scaled_path_);
-      RCLCPP_INFO(node_->get_logger(), "Emergency!! velocity/10 path published! (추월X, Emergency)");
+      RCLCPP_INFO(
+        node_->get_logger(),
+        "Emergency path published! mode=%.0f dyn=%.2f static=%.2f",
+        overtake_flag, dynamic_distance, static_distance);
       return BT::NodeStatus::SUCCESS;
     }
+
     pub_path_->publish(*lp);
-    RCLCPP_INFO(node_->get_logger(), "추월X, Emergency 인데 emergency_scaled_path가 아직 갱신이 안돼서 로컬 패스를 퍼블리쉬함!!");
+    RCLCPP_INFO(node_->get_logger(), "Emergency인데 scaled path가 아직 없어 local path를 publish함");
     return BT::NodeStatus::SUCCESS;
   }
-  // Emergency mode (추월O)
-  else if ((dynamic_distance <= 0.5 || static_distance <= 1.0) && overtake_flag == 2.0)
+
+  pub_path_->publish(*lp);
+
+  if (overtake_flag == MODE_ACC)
   {
-    emergency_scaled_path_ = path_scaler(*lp, 10.0);
-    if (emergency_scaled_path_)
+    if (obstacle_nearby)
     {
-      pub_path_->publish(*emergency_scaled_path_);
-      RCLCPP_INFO(node_->get_logger(), "Emergency!! velocity/10 path published! (추월O, Emergency)");
-      return BT::NodeStatus::SUCCESS;
-    }
-    pub_path_->publish(*lp);
-    RCLCPP_INFO(node_->get_logger(), "추월O, Emergency 인데 emergency_scaled_path가 아직 갱신이 안돼서 로컬 패스를 퍼블리쉬함!!");
-    return BT::NodeStatus::SUCCESS;
-  }
-  // ACC mode -> STATIC 회피 모드 (overtake_flag==4)
-  else if ((static_distance < 2.5 || dynamic_distance < 2.5) && overtake_flag == 4.0)
-  {
-    acc_scaled_path_ = path_scaler(*lp, 2.0);
-    additional_slowdown = 40;
-    if (acc_scaled_path_)
-    {
-      pub_path_->publish(*acc_scaled_path_);
-      RCLCPP_INFO(node_->get_logger(), "ACC mode, distance < 2.5m");
-      return BT::NodeStatus::SUCCESS;
-    }
-    pub_path_->publish(*lp);
-    RCLCPP_INFO(node_->get_logger(), "ACC mode, distance < 2.5m인데 acc_scaled_path가 아직 갱신이 안돼서 로컬 패스를 퍼블리쉬");
-    return BT::NodeStatus::SUCCESS;
-  }
-  // distance < 10m
-  else if (dynamic_distance < 10.0 || static_distance < 10.0)
-  {
-    if (additional_slowdown){
-      nav_msgs::msg::Path out = *lp;
-      out = path_scaler(out, 2.0);
-      additional_slowdown--;
-      pub_path_->publish(out);
-      if (overtake_flag == 4.0)
-      {
-        RCLCPP_INFO(node_->get_logger(), "ACC mode, 2.5m < distance < 10m");
-      }
-      else if (overtake_flag == 0.0)
-      {
-        RCLCPP_INFO(node_->get_logger(), "global path 추종, 거리 10m 이내.");
-      }
-      else if (overtake_flag == 1.0)
-      {
-        RCLCPP_INFO(node_->get_logger(), "Static 회피 모드, 거리 10m 이내. 속도 2배 이하로!!");
-      }
-      else if (overtake_flag == 2.0)
-      {
-        RCLCPP_INFO(node_->get_logger(), "Dynamic 추월 모드, 거리 10m 이내.");
-      }
-      else
-      {
-        std::string log = std::string("unknown overtake_flag!!! ") + py_str_double(overtake_flag) + " (거리 10m 이내)";
-        RCLCPP_WARN(node_->get_logger(), "%s", log.c_str());
-      }
-      return BT::NodeStatus::SUCCESS;
-    }
-    else if (overtake_flag == 4.0)
-    {
-      pub_path_->publish(*lp);
-      RCLCPP_INFO(node_->get_logger(), "ACC mode, 2.5m < distance < 10m");
-    }
-    else if (overtake_flag == 0.0)
-    {
-      pub_path_->publish(*lp);
-      RCLCPP_INFO(node_->get_logger(), "global path 추종, 거리 10m 이내.");
-    }
-    else if (overtake_flag == 1.0)
-    {
-      pub_path_->publish(*lp);
-      RCLCPP_INFO(node_->get_logger(), "Static 회피 모드, 거리 10m 이내. 속도 2배 이하로!!");
-    }
-    else if (overtake_flag == 2.0)
-    {
-      pub_path_->publish(*lp);
-      RCLCPP_INFO(node_->get_logger(), "Dynamic 추월 모드, 거리 10m 이내.");
+      RCLCPP_INFO(node_->get_logger(), "ACC mode, obstacle nearby.");
     }
     else
     {
-      pub_path_->publish(*lp);
-      std::string log = std::string("unknown overtake_flag!!! ") + py_str_double(overtake_flag) + " (거리 10m 이내)";
-      RCLCPP_WARN(node_->get_logger(), "%s", log.c_str());
+      RCLCPP_INFO(node_->get_logger(), "ACC mode, obstacle track cleared.");
     }
-    return BT::NodeStatus::SUCCESS;
   }
-  // no obstacle nearby
+  else if (overtake_flag == MODE_AVOID)
+  {
+    if (obstacle_nearby)
+    {
+      RCLCPP_INFO(node_->get_logger(), "Avoid mode, obstacle nearby.");
+    }
+    else
+    {
+      RCLCPP_INFO(node_->get_logger(), "Avoid mode, obstacle track cleared.");
+    }
+  }
+  else if (overtake_flag == MODE_BASE)
+  {
+    if (obstacle_nearby)
+    {
+      RCLCPP_INFO(node_->get_logger(), "Base mode, obstacle nearby.");
+    }
+    else
+    {
+      RCLCPP_INFO(node_->get_logger(), "Base mode, no obstacle nearby.");
+    }
+  }
   else
   {
-    if (additional_slowdown){
-      nav_msgs::msg::Path out = *lp;
-      out = path_scaler(out, 2.0);
-      additional_slowdown--;
-      pub_path_->publish(out);
-      if (overtake_flag == 4.0)
-      {
-        RCLCPP_INFO(node_->get_logger(), "ACC mode, 유효 장애물 X");
-      }
-      else if (overtake_flag == 0.0)
-      {
-        RCLCPP_INFO(node_->get_logger(), "global path 추종, 유효 장애물 X");
-      }
-      else if (overtake_flag == 1.0)
-      {
-        RCLCPP_INFO(node_->get_logger(), "Static 회피 모드, 유효 장애물 X");
-      }
-      else if (overtake_flag == 2.0)
-      {
-        RCLCPP_INFO(node_->get_logger(), "Dynamic 추월 모드, 유효 장애물 X");
-      }
-      else
-      {
-        std::string log = std::string("unknown overtake_flag!!! ") + py_str_double(overtake_flag) + " (유효 장애물 X)";
-        RCLCPP_WARN(node_->get_logger(), "%s", log.c_str());
-      }
-      return BT::NodeStatus::SUCCESS;
-    }
-    else if (overtake_flag == 4.0)
+    std::string log = std::string("unknown overtake_flag!!! ") + py_str_double(overtake_flag);
+    if (obstacle_nearby)
     {
-      pub_path_->publish(*lp);
-      RCLCPP_INFO(node_->get_logger(), "ACC mode, 유효 장애물 X");
-    }
-    else if (overtake_flag == 0.0)
-    {
-      pub_path_->publish(*lp);
-      RCLCPP_INFO(node_->get_logger(), "global path 추종, 유효 장애물 X");
-    }
-    else if (overtake_flag == 1.0)
-    {
-      pub_path_->publish(*lp);
-      RCLCPP_INFO(node_->get_logger(), "Static 회피 모드, 유효 장애물 X");
-    }
-    else if (overtake_flag == 2.0)
-    {
-      pub_path_->publish(*lp);
-      RCLCPP_INFO(node_->get_logger(), "Dynamic 추월 모드, 유효 장애물 X");
+      log += " (obstacle nearby)";
     }
     else
     {
-      pub_path_->publish(*lp);
-      std::string log = std::string("unknown overtake_flag!!! ") + py_str_double(overtake_flag) + " (유효 장애물 X)";
-      RCLCPP_WARN(node_->get_logger(), "%s", log.c_str());
+      log += " (no obstacle nearby)";
     }
-    return BT::NodeStatus::SUCCESS;
+    RCLCPP_WARN(node_->get_logger(), "%s", log.c_str());
   }
+
+  return BT::NodeStatus::SUCCESS;
 }
 
 } // namespace behavior_tree_cpp_pkg

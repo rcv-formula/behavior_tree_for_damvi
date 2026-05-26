@@ -11,11 +11,13 @@
 #include "rclcpp/rclcpp.hpp"
 
 #include "std_msgs/msg/bool.hpp"
+#include "std_msgs/msg/int32.hpp"
 #include "std_msgs/msg/string.hpp"
 
 #include "nav_msgs/msg/odometry.hpp"
 #include "nav_msgs/msg/path.hpp"
 #include "geometry_msgs/msg/point_stamped.hpp"
+#include "visualization_msgs/msg/marker.hpp"
 
 #include "behaviortree_cpp_v3/action_node.h"
 #include "behaviortree_cpp_v3/basic_types.h"
@@ -72,6 +74,14 @@ struct SharedData
   // local path (for SelectPath)
   nav_msgs::msg::Path::SharedPtr local_path{nullptr};
   std::pair<int32_t, uint32_t> local_stamp{0, 0};
+
+  // latest BT obstacle decision (for SelectPath + RViz status)
+  bool obstacle_ready{false};
+  bool latest_dynamic_obstacle{false};
+  bool latest_static_obstacle{false};
+  double latest_dynamic_distance{100.0};
+  double latest_static_distance{100.0};
+  int latest_obstacle_mode{1};
 };
 
 // ---- math utilities ----
@@ -128,7 +138,7 @@ private:
 
 // -----------------------
 // CheckObstacle (your Python CheckObstacle behaviour)
-// - Outputs: dynamic_obstacle, static_obstacle, dynamic_distance, static_distance, prioritize_dynamic_flag
+// - Outputs: dynamic_obstacle, static_obstacle, dynamic_distance, static_distance, prioritize_dynamic_flag, obstacle_mode
 // -----------------------
 class CheckObstacleNode : public BT::SyncActionNode
 {
@@ -141,12 +151,13 @@ public:
   {
     return {
       BT::OutputPort<bool>("dynamic_obstacle"),
-      BT::OutputPort<bool>("static_obstacle"),
-      BT::OutputPort<double>("dynamic_distance"),
-      BT::OutputPort<double>("static_distance"),
-      BT::OutputPort<bool>("prioritize_dynamic_flag"),
-    };
-  }
+	      BT::OutputPort<bool>("static_obstacle"),
+	      BT::OutputPort<double>("dynamic_distance"),
+	      BT::OutputPort<double>("static_distance"),
+	      BT::OutputPort<bool>("prioritize_dynamic_flag"),
+	      BT::OutputPort<int>("obstacle_mode"),
+	    };
+	  }
 
   BT::NodeStatus tick() override;
 
@@ -156,18 +167,24 @@ private:
   rclcpp::Node::SharedPtr node_;
   std::shared_ptr<SharedData> shared_;
 
-  // params (same semantics as python)
-  double thresh_m_{15.0};
-  double estop_thresh_m_{0.5}; // kept for parity, not used directly (python comments)
-  double fresh_{0.3};
-  double half_angle_deg_{100.0};
+	  // params (same semantics as python)
+	  double thresh_m_{15.0};
+	  double static_thresh_m_{10.0};
+	  double estop_thresh_m_{0.5}; // kept for parity, not used directly (python comments)
+	  double fresh_{0.15};
+	  double half_angle_deg_{100.0};
+		  double dynamic_min_speed_mps_{0.009};
+	  double static_path_enter_m_{0.6};
+	  double static_path_hold_m_{1.0};
+	  double dynamic_static_overlap_m_{1.0};
 
   // state
   bool st_flag_memory_{false};
   nav_msgs::msg::Path::SharedPtr global_path_msg_{nullptr};
 
-  // ros i/o
-  rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr publish_flag_;
+	  // ros i/o
+	  rclcpp::Publisher<geometry_msgs::msg::PointStamped>::SharedPtr publish_flag_;
+	  rclcpp::Publisher<std_msgs::msg::Int32>::SharedPtr publish_mode_;
 
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr sub_global_path_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_ego_;
@@ -178,7 +195,7 @@ private:
 // -----------------------
 // SelectPath (your Python SelectPath behaviour)
 // - Inputs: dynamic_distance, static_distance
-// - Output: overtake_flag
+// - Output: mode flag from local planner (0=BASE, 1=AVOID, 2=ACC)
 // -----------------------
 class SelectPathNode : public BT::SyncActionNode
 {
@@ -199,13 +216,14 @@ public:
   BT::NodeStatus tick() override;
 
 private:
-  int additional_slowdown{0};  // 장애물 회피 후 일정시간동안 더 속도 늦춘 상태를 유지하기
   nav_msgs::msg::Path path_scaler(const nav_msgs::msg::Path& path_msg, double divide);
+  void publish_decision_marker(const std::string& frame_id);
 
   rclcpp::Node::SharedPtr node_;
   std::shared_ptr<SharedData> shared_;
 
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub_path_;
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr pub_marker_;
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr sub_local_;
 
   std::pair<int32_t, uint32_t> local_last_stamp_{0, 0};
