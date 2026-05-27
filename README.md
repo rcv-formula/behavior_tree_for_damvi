@@ -53,10 +53,10 @@ ros2 launch behavior_tree_cpp bt_launch.py bypass_critical:=true obstacle_mode:=
 Change only the mode number for forced tests:
 
 ```bash
-ros2 launch behavior_tree_cpp bt_launch.py bypass_critical:=true obstacle_mode:=1
-ros2 launch behavior_tree_cpp bt_launch.py bypass_critical:=true obstacle_mode:=2
-ros2 launch behavior_tree_cpp bt_launch.py bypass_critical:=true obstacle_mode:=3
-ros2 launch behavior_tree_cpp bt_launch.py bypass_critical:=true obstacle_mode:=3 dynamic_min_speed_mps:=0.05
+ros2 launch behavior_tree_cpp bt_launch.py obstacle_mode:=1
+ros2 launch behavior_tree_cpp bt_launch.py obstacle_mode:=2
+ros2 launch behavior_tree_cpp bt_launch.py obstacle_mode:=3
+ros2 launch behavior_tree_cpp bt_launch.py obstacle_mode:=3 dynamic_min_speed_mps:=0.05
 ```
 
 Fake-topic tester:
@@ -101,7 +101,7 @@ Current RF rule:
 The restart target is:
 
 ```bash
-cd /home/symoon/Desktop/F1/Local_SLAM_Complete/good/SLAM_main-local_loss_wheel
+cd /home/rcv/SLAM/SLAM_main
 source install/setup.bash
 ros2 launch cartographer_ros Damvi_carto_pure_wheel_launch.py
 ```
@@ -139,7 +139,7 @@ cartographer_restart_rf_max:=65535
 Terminal 1: start the currently used Cartographer.
 
 ```bash
-cd /home/symoon/Desktop/F1/Local_SLAM_Complete/good/SLAM_main-local_loss_wheel
+cd /home/rcv/SLAM/SLAM_main
 source install/setup.bash
 ros2 launch cartographer_ros Damvi_carto_pure_wheel_launch.py
 ```

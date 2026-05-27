@@ -3,20 +3,12 @@ from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
-import os
-
 
 def generate_launch_description():
-    local_cartographer_ws = '/home/symoon/Desktop/F1/Local_SLAM_Complete/good/SLAM_main-local_loss_wheel'
-    vehicle_cartographer_ws = '/home/rcv/SLAM_main'
+    cartographer_ws = '/home/rcv/SLAM/SLAM_main'
     cartographer_launch_file = 'Damvi_carto_pure_wheel_launch.py'
-    default_cartographer_ws = (
-        local_cartographer_ws
-        if os.path.exists(os.path.join(local_cartographer_ws, 'install', 'setup.bash'))
-        else vehicle_cartographer_ws
-    )
     default_cartographer_launch = (
-        f'cd {default_cartographer_ws} && source install/setup.bash && '
+        f'cd {cartographer_ws} && source install/setup.bash && '
         f'ros2 launch cartographer_ros {cartographer_launch_file}'
     )
 

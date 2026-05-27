@@ -226,7 +226,7 @@ CartographerRestartNode::CartographerRestartNode(const std::string& name,
     "pkill -SIGINT -f 'ros2 launch cartographer_ros Damvi_carto_pure_wheel_launch.py' || true");
   restart_config_.launch_command = node_->declare_parameter<std::string>(
     "cartographer_launch_command",
-    "cd /home/symoon/Desktop/F1/Local_SLAM_Complete/good/SLAM_main-local_loss_wheel && "
+    "cd /home/rcv/SLAM/SLAM_main && "
     "source install/setup.bash && "
     "ros2 launch cartographer_ros Damvi_carto_pure_wheel_launch.py");
   restart_config_.launch_log_path =
