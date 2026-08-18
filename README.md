@@ -88,25 +88,26 @@ ros2 topic echo /bt_decision_marker
 
 ## RF Cartographer Restart
 
-This feature restarts Cartographer from the behavior tree when the mapped RF channel is turned on.
+This feature restarts Cartographer from the behavior tree when the mapped RF channel switches between low and high.
 
 Current RF rule:
 
 - Topic: `/rf`
 - Type: `std_msgs/msg/UInt16MultiArray`
 - Channel: `data[9]` (`10th` RF value)
-- Off: `data[9] <= 1500`
-- On / restart trigger: `data[9] > 1500`
+- Low / off: `data[9] <= 1000`
+- High / on: `data[9] >= 2000`
+- Restart trigger: low-to-high and high-to-low edges
 
 The restart target is:
 
 ```bash
-cd /home/rcv/SLAM/SLAM_main
+cd /home/rcv/SLAM_main-SLAM_IMU_WHEEL_tun_upg
 source install/setup.bash
 ros2 launch cartographer_ros Damvi_carto_pure_wheel_launch.py
 ```
 
-When the RF value goes from off to on, BT runs:
+When the RF value goes from low to high or high to low, BT runs:
 
 ```bash
 pkill -SIGINT -f 'ros2 launch cartographer_ros Damvi_carto_pure_wheel_launch.py' || true
@@ -118,20 +119,23 @@ Then it starts Cartographer again in the background. The relaunched Cartographer
 /tmp/cartographer_restart.log
 ```
 
+If a desktop terminal is available, the relaunch opens a `gnome-terminal` window titled `Cartographer Restart` and runs Cartographer there. If no display is available, it falls back to the background launch path.
+
 Run with RF restart enabled:
 
 ```bash
 ros2 launch behavior_tree_cpp bt_launch.py \
-  bypass_critical:=true \
-  cartographer_restart_enabled:=true
+  bypass_critical:=true
 ```
 
-The defaults are already set to channel `9` and threshold `>1500`, so these arguments are optional:
+The defaults are already set to channel `9`, low `<=1000`, and high `>=2000`, so these arguments are optional:
 
 ```bash
 cartographer_restart_rf_channel:=9
-cartographer_restart_rf_min:=1501
+cartographer_restart_rf_off_max:=1000
+cartographer_restart_rf_min:=2000
 cartographer_restart_rf_max:=65535
+cartographer_restart_cooldown_sec:=1.0
 ```
 
 ### Test With Bag And Manual RF Trigger
@@ -139,7 +143,7 @@ cartographer_restart_rf_max:=65535
 Terminal 1: start the currently used Cartographer.
 
 ```bash
-cd /home/rcv/SLAM/SLAM_main
+cd /home/rcv/SLAM_main-SLAM_IMU_WHEEL_tun_upg
 source install/setup.bash
 ros2 launch cartographer_ros Damvi_carto_pure_wheel_launch.py
 ```
@@ -190,7 +194,7 @@ To inspect the live RF value:
 ros2 topic echo /rf --once
 ```
 
-If the actual controller is mapped correctly, turning the mapped switch on should make `/rf.data[9]` greater than `1500`; turning it off should make it `1500` or lower.
+If the actual controller is mapped correctly, turning the mapped switch on should make `/rf.data[9]` reach about `2000`; turning it off should make it `1000` or lower.
 
 ## 0501 Full Pipeline Test
 

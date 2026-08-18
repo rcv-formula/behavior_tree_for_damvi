@@ -5,12 +5,21 @@ from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
 def generate_launch_description():
-    cartographer_ws = '/home/rcv/SLAM/SLAM_main'
+    cartographer_ws = '/home/rcv/SLAM_main-SLAM_IMU_WHEEL_tun_upg'
     cartographer_launch_file = 'Damvi_carto_pure_wheel_launch.py'
-    default_cartographer_launch = (
-        f'cd {cartographer_ws} && source install/setup.bash && '
-        f'ros2 launch cartographer_ros {cartographer_launch_file}'
-    )
+    pbstream_filename = LaunchConfiguration('pbstream_filename')
+    default_cartographer_launch = [
+        'if command -v gnome-terminal >/dev/null 2>&1 && [ -n "$DISPLAY" ]; then '
+        f'gnome-terminal --title "Cartographer Restart" -- bash -lc '
+        f'"cd {cartographer_ws} && source install/setup.bash && '
+        f'ros2 launch cartographer_ros {cartographer_launch_file} pbstream_filename:=',
+        pbstream_filename,
+        '"; '
+        f'else cd {cartographer_ws} && source install/setup.bash && '
+        f'ros2 launch cartographer_ros {cartographer_launch_file} pbstream_filename:=',
+        pbstream_filename,
+        '; fi'
+    ]
 
     bypass_critical = LaunchConfiguration('bypass_critical')
     obstacle_mode = LaunchConfiguration('obstacle_mode')
@@ -18,6 +27,7 @@ def generate_launch_description():
     cartographer_restart_enabled = LaunchConfiguration('cartographer_restart_enabled')
     cartographer_restart_rf_topic = LaunchConfiguration('cartographer_restart_rf_topic')
     cartographer_restart_rf_channel = LaunchConfiguration('cartographer_restart_rf_channel')
+    cartographer_restart_rf_off_max = LaunchConfiguration('cartographer_restart_rf_off_max')
     cartographer_restart_rf_min = LaunchConfiguration('cartographer_restart_rf_min')
     cartographer_restart_rf_max = LaunchConfiguration('cartographer_restart_rf_max')
     cartographer_restart_cooldown_sec = LaunchConfiguration('cartographer_restart_cooldown_sec')
@@ -51,6 +61,7 @@ def generate_launch_description():
             'cartographer_restart_enabled': ParameterValue(cartographer_restart_enabled, value_type=bool),
             'cartographer_restart_rf_topic': cartographer_restart_rf_topic,
             'cartographer_restart_rf_channel': ParameterValue(cartographer_restart_rf_channel, value_type=int),
+            'cartographer_restart_rf_off_max': ParameterValue(cartographer_restart_rf_off_max, value_type=int),
             'cartographer_restart_rf_min': ParameterValue(cartographer_restart_rf_min, value_type=int),
             'cartographer_restart_rf_max': ParameterValue(cartographer_restart_rf_max, value_type=int),
             'cartographer_restart_cooldown_sec': ParameterValue(cartographer_restart_cooldown_sec, value_type=float),
@@ -79,7 +90,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'cartographer_restart_enabled',
-            default_value='false',
+            default_value='true',
             description='Enable RF-triggered cartographer launch restart'
         ),
         DeclareLaunchArgument(
@@ -93,9 +104,14 @@ def generate_launch_description():
             description='Zero-based /rf channel index that triggers cartographer restart'
         ),
         DeclareLaunchArgument(
+            'cartographer_restart_rf_off_max',
+            default_value='1000',
+            description='RF channel value treated as low/off for restart edge detection'
+        ),
+        DeclareLaunchArgument(
             'cartographer_restart_rf_min',
-            default_value='1501',
-            description='Minimum RF channel value for restart trigger. Values <=1500 are treated as off.'
+            default_value='2000',
+            description='Minimum RF channel value treated as high/on for restart edge detection'
         ),
         DeclareLaunchArgument(
             'cartographer_restart_rf_max',
@@ -104,13 +120,18 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'cartographer_restart_cooldown_sec',
-            default_value='10.0',
+            default_value='1.0',
             description='Minimum seconds between cartographer restart requests'
         ),
         DeclareLaunchArgument(
             'cartographer_restart_stop_delay_sec',
-            default_value='2.0',
+            default_value='1.0',
             description='Delay after stopping cartographer before relaunching'
+        ),
+        DeclareLaunchArgument(
+            'pbstream_filename',
+            default_value='latest_l.pbstream',
+            description='pbstream_filename argument passed to the cartographer launch file'
         ),
         DeclareLaunchArgument(
             'cartographer_stop_command',

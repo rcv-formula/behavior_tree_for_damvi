@@ -213,22 +213,28 @@ CartographerRestartNode::CartographerRestartNode(const std::string& name,
                                                  const rclcpp::Node::SharedPtr& node)
 : BT::SyncActionNode(name, config), node_(node)
 {
-  enabled_ = node_->declare_parameter<bool>("cartographer_restart_enabled", false);
+  enabled_ = node_->declare_parameter<bool>("cartographer_restart_enabled", true);
   rf_topic_ = node_->declare_parameter<std::string>("cartographer_restart_rf_topic", "/rf");
   rf_channel_ = node_->declare_parameter<int>("cartographer_restart_rf_channel", 9);
-  rf_min_ = node_->declare_parameter<int>("cartographer_restart_rf_min", 1501);
+  rf_off_max_ = node_->declare_parameter<int>("cartographer_restart_rf_off_max", 1000);
+  rf_min_ = node_->declare_parameter<int>("cartographer_restart_rf_min", 2000);
   rf_max_ = node_->declare_parameter<int>("cartographer_restart_rf_max", 65535);
-  cooldown_sec_ = node_->declare_parameter<double>("cartographer_restart_cooldown_sec", 10.0);
+  cooldown_sec_ = node_->declare_parameter<double>("cartographer_restart_cooldown_sec", 1.0);
   restart_config_.stop_delay_sec =
-    node_->declare_parameter<double>("cartographer_restart_stop_delay_sec", 2.0);
+    node_->declare_parameter<double>("cartographer_restart_stop_delay_sec", 1.0);
   restart_config_.stop_command = node_->declare_parameter<std::string>(
     "cartographer_stop_command",
     "pkill -SIGINT -f 'ros2 launch cartographer_ros Damvi_carto_pure_wheel_launch.py' || true");
   restart_config_.launch_command = node_->declare_parameter<std::string>(
     "cartographer_launch_command",
-    "cd /home/rcv/SLAM/SLAM_main && "
+    "if command -v gnome-terminal >/dev/null 2>&1 && [ -n \"$DISPLAY\" ]; then "
+    "gnome-terminal --title \"Cartographer Restart\" -- bash -lc "
+    "\"cd /home/rcv/SLAM_main-SLAM_IMU_WHEEL_tun_upg && "
     "source install/setup.bash && "
-    "ros2 launch cartographer_ros Damvi_carto_pure_wheel_launch.py");
+    "ros2 launch cartographer_ros Damvi_carto_pure_wheel_launch.py\"; "
+    "else cd /home/rcv/SLAM_main-SLAM_IMU_WHEEL_tun_upg && "
+    "source install/setup.bash && "
+    "ros2 launch cartographer_ros Damvi_carto_pure_wheel_launch.py; fi");
   restart_config_.launch_log_path =
     node_->declare_parameter<std::string>("cartographer_launch_log_path",
                                           "/tmp/cartographer_restart.log");
@@ -241,8 +247,9 @@ CartographerRestartNode::CartographerRestartNode(const std::string& name,
     });
 
   RCLCPP_INFO(node_->get_logger(),
-              "CartographerRestart watching RF topic '%s' (enabled=%s, channel=%d, range=[%d,%d])",
-              rf_topic_.c_str(), enabled_ ? "true" : "false", rf_channel_, rf_min_, rf_max_);
+              "CartographerRestart watching RF topic '%s' (enabled=%s, channel=%d, low<=%d, high=[%d,%d])",
+              rf_topic_.c_str(), enabled_ ? "true" : "false", rf_channel_,
+              rf_off_max_, rf_min_, rf_max_);
 }
 
 CartographerRestartNode::~CartographerRestartNode()
@@ -262,6 +269,7 @@ void CartographerRestartNode::refresh_params()
 {
   node_->get_parameter("cartographer_restart_enabled", enabled_);
   node_->get_parameter("cartographer_restart_rf_channel", rf_channel_);
+  node_->get_parameter("cartographer_restart_rf_off_max", rf_off_max_);
   node_->get_parameter("cartographer_restart_rf_min", rf_min_);
   node_->get_parameter("cartographer_restart_rf_max", rf_max_);
   node_->get_parameter("cartographer_restart_cooldown_sec", cooldown_sec_);
@@ -276,8 +284,10 @@ void CartographerRestartNode::refresh_params()
   }
   if (rf_min_ < 0) rf_min_ = 0;
   if (rf_max_ < 0) rf_max_ = 0;
+  if (rf_off_max_ < 0) rf_off_max_ = 0;
   if (rf_min_ > 65535) rf_min_ = 65535;
   if (rf_max_ > 65535) rf_max_ = 65535;
+  if (rf_off_max_ > 65535) rf_off_max_ = 65535;
 }
 
 void CartographerRestartNode::on_rf_msg(const std_msgs::msg::UInt16MultiArray::SharedPtr msg)
@@ -288,6 +298,7 @@ void CartographerRestartNode::on_rf_msg(const std_msgs::msg::UInt16MultiArray::S
   {
     std::lock_guard<std::mutex> lk(mtx_);
     trigger_latched_ = false;
+    rf_state_known_ = false;
     return;
   }
 
@@ -310,20 +321,26 @@ void CartographerRestartNode::on_rf_msg(const std_msgs::msg::UInt16MultiArray::S
   }
 
   const std::uint16_t value = msg->data[channel];
-  const bool trigger_active = value >= static_cast<std::uint16_t>(rf_min_) &&
-                              value <= static_cast<std::uint16_t>(rf_max_);
+  const bool trigger_high = value >= static_cast<std::uint16_t>(rf_min_) &&
+                            value <= static_cast<std::uint16_t>(rf_max_);
+  const bool trigger_low = value <= static_cast<std::uint16_t>(rf_off_max_);
 
   bool should_request = false;
   {
     std::lock_guard<std::mutex> lk(mtx_);
-    if (trigger_active && !trigger_latched_)
+    if (trigger_high)
     {
+      should_request = rf_state_known_ && !trigger_latched_;
       trigger_latched_ = true;
-      should_request = true;
     }
-    else if (!trigger_active)
+    else if (trigger_low)
     {
+      should_request = rf_state_known_ && trigger_latched_;
       trigger_latched_ = false;
+    }
+    if (trigger_high || trigger_low)
+    {
+      rf_state_known_ = true;
     }
   }
 

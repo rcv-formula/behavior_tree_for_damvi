@@ -144,7 +144,7 @@ private:
 
 // -----------------------
 // CartographerRestart
-// - Watches mapped RF channel values and restarts cartographer launch once per switch edge.
+// - Watches mapped RF channel values and restarts cartographer launch on low/high switch edges.
 // -----------------------
 class CartographerRestartNode : public BT::SyncActionNode
 {
@@ -160,7 +160,7 @@ public:
 private:
   struct RestartConfig
   {
-    double stop_delay_sec{2.0};
+    double stop_delay_sec{1.0};
     std::string stop_command;
     std::string launch_command;
     std::string launch_log_path;
@@ -178,18 +178,20 @@ private:
   std::mutex mtx_;
   bool restart_requested_{false};
   bool trigger_latched_{false};
+  bool rf_state_known_{false};
   double last_restart_t_{0.0};
   std::uint16_t requested_rf_value_{0};
 
   std::atomic_bool restart_in_progress_{false};
   std::thread restart_thread_;
 
-  bool enabled_{false};
+  bool enabled_{true};
   std::string rf_topic_{"/rf"};
   int rf_channel_{9};
-  int rf_min_{1501};
+  int rf_off_max_{1000};
+  int rf_min_{2000};
   int rf_max_{65535};
-  double cooldown_sec_{10.0};
+  double cooldown_sec_{1.0};
   RestartConfig restart_config_;
 };
 
