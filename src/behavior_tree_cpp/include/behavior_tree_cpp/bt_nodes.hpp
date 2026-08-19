@@ -185,7 +185,7 @@ private:
   std::atomic_bool restart_in_progress_{false};
   std::thread restart_thread_;
 
-  bool enabled_{true};
+  bool enabled_{false};
   std::string rf_topic_{"/rf"};
   int rf_channel_{9};
   int rf_off_max_{1000};

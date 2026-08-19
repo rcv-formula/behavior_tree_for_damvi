@@ -213,7 +213,7 @@ CartographerRestartNode::CartographerRestartNode(const std::string& name,
                                                  const rclcpp::Node::SharedPtr& node)
 : BT::SyncActionNode(name, config), node_(node)
 {
-  enabled_ = node_->declare_parameter<bool>("cartographer_restart_enabled", true);
+  enabled_ = node_->declare_parameter<bool>("cartographer_restart_enabled", false);
   rf_topic_ = node_->declare_parameter<std::string>("cartographer_restart_rf_topic", "/rf");
   rf_channel_ = node_->declare_parameter<int>("cartographer_restart_rf_channel", 9);
   rf_off_max_ = node_->declare_parameter<int>("cartographer_restart_rf_off_max", 1000);

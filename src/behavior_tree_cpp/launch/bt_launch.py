@@ -90,7 +90,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             'cartographer_restart_enabled',
-            default_value='true',
+            default_value='false',
             description='Enable RF-triggered cartographer launch restart'
         ),
         DeclareLaunchArgument(
